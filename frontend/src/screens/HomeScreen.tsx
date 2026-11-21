@@ -6,9 +6,7 @@ import { CategoryBar } from "@/components/categories/CategoryBar";
 import { StreamerGrid } from "@/components/streamers/StreamerGrid";
 import { Spinner } from "@/components/ui/Spinner";
 import { useStreamerFeed } from "@/hooks/useStreamerFeed";
-import { useToast } from "@/state/ToastProvider";
 import { useFollow } from "@/state/FollowProvider";
-import { useSubscriptions } from "@/state/SubscriptionProvider";
 import { loadSessionNumber, saveSessionNumber, STORAGE_KEYS } from "@/lib/storage";
 import styles from "./HomeScreen.module.css";
 
@@ -27,8 +25,6 @@ interface HomeScreenProps {
  */
 export function HomeScreen({ platform }: HomeScreenProps) {
   const { isFollowing, toggleFollow } = useFollow();
-  const { isSubscribed, toggle: toggleSubscription } = useSubscriptions();
-  const { toast } = useToast();
 
   const [searchParams, setSearchParams] = useSearchParams();
   const paramsRef = useRef(searchParams);
@@ -222,10 +218,6 @@ export function HomeScreen({ platform }: HomeScreenProps) {
     [activeCategoryId, activeGroup],
   );
 
-  const subscribed = activeCategory
-    ? isSubscribed(platform, activeCategory.id)
-    : false;
-
   const handleSelectGroup = useCallback(
     (id: string) => {
       setActiveGroupId(id);
@@ -237,19 +229,6 @@ export function HomeScreen({ platform }: HomeScreenProps) {
     },
     [groups],
   );
-
-  const handleToggleSubscribe = useCallback(() => {
-    if (!activeCategory || !activeGroup) return;
-    const wasSubscribed = isSubscribed(platform, activeCategory.id);
-    toggleSubscription({
-      platform,
-      cate1Id: activeGroup.id,
-      cate1Name: activeGroup.name,
-      cate2Id: activeCategory.id,
-      cate2Name: activeCategory.name,
-    });
-    toast(wasSubscribed ? "已取消订阅该分区" : "已订阅该分区", "success");
-  }, [activeCategory, activeGroup, isSubscribed, platform, toast, toggleSubscription]);
 
   const handleRetry = useCallback(() => {
     setReloadKey((k) => k + 1);
@@ -286,9 +265,6 @@ export function HomeScreen({ platform }: HomeScreenProps) {
             subTouchedRef.current = true;
             setActiveSubCategoryId(id);
           }}
-          canSubscribe={Boolean(activeCategory)}
-          subscribed={subscribed}
-          onToggleSubscribe={handleToggleSubscribe}
         />
       ) : null}
 
@@ -311,11 +287,7 @@ export function HomeScreen({ platform }: HomeScreenProps) {
           isFollowed={isFollowing}
           onToggleFollow={toggleFollow}
           onRetry={handleRetry}
-          onClearFilter={
-            activeSubCategoryId
-              ? () => setActiveSubCategoryId(null)
-              : undefined
-          }
+          onClearFilter={activeSubCategoryId ? () => setActiveSubCategoryId(null) : undefined}
           platform={platform}
           categoryFilterName={activeCategory?.name}
         />

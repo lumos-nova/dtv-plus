@@ -31,6 +31,7 @@ export interface UseXgPlayerResult {
   volume: number;
   togglePlay: () => void;
   toggleMute: () => void;
+  setMuted: (muted: boolean) => void;
   setVolume: (v: number) => void;
   /** 当前环境是否支持画中画小窗（不支持时不显示按钮） */
   pipSupported: boolean;
@@ -436,6 +437,11 @@ export function useXgPlayer(
     else applyVolume(0);
   }, [applyVolume, volume]);
 
+  const setMuted = useCallback((muted: boolean) => {
+    const player = playerRef.current;
+    if (player) player.muted = muted;
+  }, []);
+
   const togglePip = useCallback(() => {
     const media = playerRef.current?.media as HTMLVideoElement | null;
     if (!media || typeof media.requestPictureInPicture !== "function") return;
@@ -456,6 +462,7 @@ export function useXgPlayer(
     volume,
     togglePlay,
     toggleMute,
+    setMuted,
     setVolume,
     pipSupported,
     pipActive,

@@ -11,15 +11,13 @@
   z-index: 50;
   flex: 0 0 auto;
   background: var(--bg-primary);
+  min-width: 0;
+  overflow: visible;
 }
 
 /* 书页·日：顶栏不要再单独铺一层实色，直接透出下方同一张纸张背景 */
 :global([data-palette="parchment"]) .navbar {
   background: transparent;
-}
-
-.drag {
-  --wails-draggable: drag;
 }
 
 .noDrag {
@@ -30,7 +28,8 @@
   display: flex;
   align-items: center;
   gap: 10px;
-  flex: 0 0 auto;
+  flex: 0 1 auto;
+  min-width: 0;
 }
 
 .actions {
@@ -38,7 +37,28 @@
   display: flex;
   align-items: center;
   gap: 10px;
-  flex: 0 0 auto;
+  flex: 0 1 auto;
+  min-width: 0;
+}
+
+@media (max-width: 900px) {
+  .navbar {
+    gap: 6px;
+    padding-inline: 8px;
+  }
+
+  .actions {
+    gap: 5px;
+  }
+
+  .toolGroup {
+    gap: 0;
+  }
+
+  .iconBtn {
+    width: 32px;
+    height: 34px;
+  }
 }
 
 /* ------------------------------------------------------------- 主播�?*/

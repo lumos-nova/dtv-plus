@@ -1,10 +1,10 @@
 import { Outlet, useLocation } from "react-router-dom";
 import { cn } from "@/lib/cn";
+import { WatchTimeTracker } from "@/features/settings/WatchTimeTracker";
 import { usePlayerUi } from "@/state/PlayerUiProvider";
 import { HomeStack } from "./HomeStack";
 import { Navbar } from "./Navbar";
 import { Sidebar } from "./Sidebar";
-import { SubscribeStack } from "./SubscribeStack";
 import styles from "./AppShell.module.css";
 
 /**
@@ -24,6 +24,7 @@ export function AppShell() {
 
   return (
     <div className={styles.appShell}>
+      <WatchTimeTracker />
       <div className={styles.backdrop} aria-hidden="true">
         <span className={styles.grain} />
       </div>
@@ -34,7 +35,6 @@ export function AppShell() {
         <main className={cn(styles.appBody, isPlayer && styles.appBodyPlayer)}>
           {/* 平台首页 / 订阅页常驻，用 Activity 在其它路由隐藏，实现 keep-alive */}
           <HomeStack />
-          <SubscribeStack />
           <Outlet />
         </main>
       </div>

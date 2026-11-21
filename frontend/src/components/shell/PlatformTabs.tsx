@@ -1,19 +1,17 @@
 import { Tabs } from "@heroui/react";
-import { Bookmark, Grid2X2, Link2 } from "lucide-react";
+import { Grid2X2 } from "lucide-react";
 import { useLocation, useNavigate } from "react-router-dom";
-import { PLATFORM_LABEL, PLATFORM_TAB_ORDER, type LivePlatform } from "@/api";
+import { PLATFORM_LABEL, PLATFORM_LOGO, PLATFORM_TAB_ORDER, type LivePlatform } from "@/api";
 import { cn } from "@/lib/cn";
 import styles from "./PlatformTabs.module.css";
 
 /** 导航项：四个平台 + "订阅"。"订阅"不是平台，但和平台同级切换。 */
-type TabId = LivePlatform | "subscribe" | "add-room" | "monitor";
+type TabId = LivePlatform | "monitor";
 
-const TABS: TabId[] = ["add-room", "monitor", "subscribe", ...PLATFORM_TAB_ORDER];
+const TABS: TabId[] = ["monitor", ...PLATFORM_TAB_ORDER];
 
 const TAB_PATH: Record<TabId, string> = {
-  "add-room": "/add-room",
   monitor: "/monitor",
-  subscribe: "/subscribe",
   douyu: "/",
   huya: "/huya",
   douyin: "/douyin",
@@ -21,9 +19,8 @@ const TAB_PATH: Record<TabId, string> = {
 };
 
 function activeTabFromPath(pathname: string, search: string): TabId {
-  if (pathname.startsWith("/add-room")) return "add-room";
   if (pathname.startsWith("/monitor")) return "monitor";
-  if (pathname.startsWith("/subscribe") || pathname.startsWith("/custom")) return "subscribe";
+  if (pathname.startsWith("/add-room")) return "douyu";
   // 播放页本身不属于任何平台：按 URL 里的 room 平台高亮对应的 tab
   if (pathname.startsWith("/player")) {
     const platform = new URLSearchParams(search).get("platform");
@@ -71,7 +68,7 @@ export function PlatformTabs() {
     <Tabs
       selectedKey={active}
       onSelectionChange={(key) => go(String(key) as TabId)}
-      className={cn(styles.tabs, styles.drag)}
+      className={styles.tabs}
     >
       <Tabs.ListContainer className={styles.track}>
         <Tabs.List className={styles.list} aria-label="内容切换">
@@ -80,29 +77,18 @@ export function PlatformTabs() {
               key={tab}
               id={tab}
               className={cn(styles.tab, styles.noDrag)}
-              aria-label={
-                tab === "add-room"
-                  ? "添加直播间"
-                  : tab === "monitor"
-                    ? "多房间工作台"
-                    : tab === "subscribe"
-                      ? "订阅分区"
-                      : `${PLATFORM_LABEL[tab]}直播`
-              }
+              aria-label={tab === "monitor" ? "多房间工作台" : `${PLATFORM_LABEL[tab]}直播`}
             >
-              {tab === "subscribe" ? (
-                <Bookmark size={14} strokeWidth={2.2} className={styles.tabIcon} />
-              ) : tab === "add-room" ? (
-                <>
-                  <Link2 size={14} strokeWidth={2.2} className={styles.tabIcon} />
-                  <span>添加直播间</span>
-                </>
-              ) : tab === "monitor" ? (
+              {tab === "monitor" ? (
                 <Grid2X2 size={14} strokeWidth={2.2} className={styles.tabIcon} />
               ) : (
-                PLATFORM_LABEL[tab]
+                <img
+                  src={PLATFORM_LOGO[tab]}
+                  alt=""
+                  className={styles.platformLogo}
+                  aria-hidden="true"
+                />
               )}
-              {tab === "subscribe" && <span className="visually-hidden">订阅分区</span>}
               <Tabs.Indicator className={styles.indicator} />
             </Tabs.Tab>
           ))}

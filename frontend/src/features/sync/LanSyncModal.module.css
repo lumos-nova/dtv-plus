@@ -31,6 +31,22 @@
   animation: dialog-in var(--dur-3) var(--ease-spring);
 }
 
+.embedded {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  width: 100%;
+}
+
+.embedded .tabs {
+  margin: 0;
+}
+
+.embedded .body {
+  padding: 12px 0 0;
+  overflow: visible;
+}
+
 @keyframes backdrop-in {
   from {
     opacity: 0;

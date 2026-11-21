@@ -36,7 +36,6 @@ export interface GridPlacement {
 const MAX_GRID_SIZE = 4;
 const MAX_ROOMS = 16;
 
-export const MONITOR_ROOM_DRAG_TYPE = "application/x-dtv-monitor-room";
 export const FOLLOW_ROOM_DRAG_TYPE = "application/x-dtv-follow-room";
 
 export function swapRoomPositionsAndSizes(

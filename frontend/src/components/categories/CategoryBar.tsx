@@ -1,4 +1,4 @@
-import { Check, ChevronDown, ChevronRight, Plus } from "lucide-react";
+import { ChevronDown, ChevronRight } from "lucide-react";
 import { useCallback, useEffect, useLayoutEffect, useState } from "react";
 import type { Category, CategoryGroup } from "@/api";
 import { cn } from "@/lib/cn";
@@ -17,10 +17,6 @@ interface CategoryBarProps {
   /** 三级分区 id；null 表示"全部"（即二级分区维度） */
   activeSubCategoryId?: string | null;
   onSelectSubCategory?: (id: string | null) => void;
-  /** 订阅当前二级分区（入口与二级分区同一行，不额外占用竖向空间） */
-  canSubscribe?: boolean;
-  subscribed?: boolean;
-  onToggleSubscribe?: () => void;
   /** 列表滚动时收成一行，给内容让出高度 */
   compact?: boolean;
 }
@@ -48,9 +44,6 @@ export function CategoryBar({
   subCategories = [],
   activeSubCategoryId = null,
   onSelectSubCategory,
-  canSubscribe = false,
-  subscribed = false,
-  onToggleSubscribe,
   compact = false,
 }: CategoryBarProps) {
   const activeGroup = groups.find((g) => g.id === activeGroupId) ?? groups[0];
@@ -168,11 +161,7 @@ export function CategoryBar({
             </span>
             <ChevronDown size={13} strokeWidth={2.6} />
           </button>
-          <button
-            type="button"
-            className={styles.compactExpand}
-            onClick={() => setForceOpen(true)}
-          >
+          <button type="button" className={styles.compactExpand} onClick={() => setForceOpen(true)}>
             全部分区
           </button>
         </div>
@@ -233,24 +222,6 @@ export function CategoryBar({
           >
             全部
             <ChevronDown size={12} strokeWidth={2.6} className={styles.moreCaret} />
-          </button>
-        )}
-
-        {onToggleSubscribe && (
-          <button
-            type="button"
-            className={cn(styles.subscribeBtn, subscribed && styles.subscribeBtnOn)}
-            onClick={onToggleSubscribe}
-            disabled={!canSubscribe}
-            aria-pressed={subscribed}
-            title={subscribed ? "取消订阅该分区" : "订阅该分区，之后可在「订阅」里直接进入"}
-          >
-            {subscribed ? (
-              <Check size={13} strokeWidth={2.6} />
-            ) : (
-              <Plus size={13} strokeWidth={2.6} />
-            )}
-            <span>{subscribed ? "已订阅" : "订阅分区"}</span>
           </button>
         )}
 

@@ -2,11 +2,16 @@ import { Check, Grid2X2 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type DragEvent } from "react";
 import { PLATFORM_LABEL, type LivePlatform } from "@/api";
 import { RoomTile } from "@/features/multiview/RoomTile";
-import { DEFAULT_DANMU_SETTINGS } from "@/features/player/danmuSettings";
+import { useDanmuBlock } from "@/features/player/useDanmuBlock";
+import {
+  DEFAULT_DANMU_SETTINGS,
+  loadDanmuPreferences,
+  normalizeDanmuSettings,
+  type DanmuUserSettings,
+} from "@/features/player/danmuSettings";
 import {
   FOLLOW_ROOM_DRAG_TYPE,
   fitRoomGrid,
-  MONITOR_ROOM_DRAG_TYPE,
   packRoomGrid,
   swapRoomPositionsAndSizes,
   type MonitorRoom,
@@ -14,6 +19,7 @@ import {
 } from "@/features/multiview/layout";
 import { parseLiveRoomUrl } from "@/features/multiview/roomUrl";
 import { useMonitorWorkspace } from "@/features/multiview/useMonitorWorkspace";
+import { loadAppSettings } from "@/lib/appSettings";
 import { cn } from "@/lib/cn";
 import styles from "./MonitorPage.module.css";
 
@@ -34,9 +40,14 @@ function droppedLink(event: DragEvent<HTMLElement>): string {
 
 export function MonitorPage() {
   const { rooms, grid, audioFocusKeys, setWorkspace } = useMonitorWorkspace();
+  const danmuBlock = useDanmuBlock();
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [dragOver, setDragOver] = useState(false);
+  const [globalAudioEnabled, setGlobalAudioEnabled] = useState(
+    () => loadAppSettings().globalAudioEnabled,
+  );
+  const [globalVolume, setGlobalVolume] = useState(() => loadAppSettings().globalVolume);
   const errorTimerRef = useRef<number | null>(null);
   const placements = useMemo(() => packRoomGrid(rooms, grid), [grid, rooms]);
 
@@ -70,6 +81,51 @@ export function MonitorPage() {
     return () => window.clearTimeout(timer);
   }, [notice]);
 
+  useEffect(() => {
+    const onVolume = (event: Event) => {
+      const detail = (event as CustomEvent<{ volume?: number }>).detail;
+      if (!detail || typeof detail.volume !== "number") return;
+      setGlobalVolume(Math.max(0, Math.min(2, detail.volume)));
+    };
+    const onGlobalAudio = (event: Event) => {
+      const detail = (event as CustomEvent<{ enabled?: boolean }>).detail;
+      if (typeof detail?.enabled === "boolean") setGlobalAudioEnabled(detail.enabled);
+    };
+    const onDanmaku = (event: Event) => {
+      const detail = (event as CustomEvent<{ enabled?: boolean }>).detail;
+      if (!detail || typeof detail.enabled !== "boolean") return;
+      const enabled = detail.enabled;
+      setWorkspace((previous) => ({
+        ...previous,
+        rooms: previous.rooms.map((room) => ({ ...room, danmakuEnabled: enabled })),
+      }));
+    };
+    const onDanmakuSettings = (event: Event) => {
+      const detail = (event as CustomEvent<Partial<DanmuUserSettings>>).detail;
+      if (!detail) return;
+      setWorkspace((previous) => ({
+        ...previous,
+        rooms: previous.rooms.map((room) => ({
+          ...room,
+          danmakuSettings: normalizeDanmuSettings({
+            ...room.danmakuSettings,
+            ...detail,
+          }),
+        })),
+      }));
+    };
+    window.addEventListener("dtv:global-volume", onVolume);
+    window.addEventListener("dtv:global-audio", onGlobalAudio);
+    window.addEventListener("dtv:global-danmaku", onDanmaku);
+    window.addEventListener("dtv:global-danmaku-settings", onDanmakuSettings);
+    return () => {
+      window.removeEventListener("dtv:global-volume", onVolume);
+      window.removeEventListener("dtv:global-audio", onGlobalAudio);
+      window.removeEventListener("dtv:global-danmaku", onDanmaku);
+      window.removeEventListener("dtv:global-danmaku-settings", onDanmakuSettings);
+    };
+  }, [setWorkspace]);
+
   const addRoom = (platform: LivePlatform, rawRoomId: string) => {
     const roomId = rawRoomId.replace(/^0+(?=\d)/, "");
     const key = `${platform}:${roomId}`;
@@ -84,6 +140,7 @@ export function MonitorPage() {
       return;
     }
 
+    const danmakuPreferences = loadDanmuPreferences();
     const nextRooms: MonitorRoom[] = [
       ...rooms,
       {
@@ -92,8 +149,8 @@ export function MonitorPage() {
         roomId,
         size: { columns: 1, rows: 1 },
         volume: 0.7,
-        danmakuEnabled: true,
-        danmakuSettings: { ...DEFAULT_DANMU_SETTINGS },
+        danmakuEnabled: danmakuPreferences.enabled,
+        danmakuSettings: { ...DEFAULT_DANMU_SETTINGS, ...danmakuPreferences.settings },
         qualityId: "",
       },
     ];
@@ -113,28 +170,7 @@ export function MonitorPage() {
     setNotice(`${platformLabel(platform)}房间 ${roomId} 已加入工作台`);
   };
 
-  const handleDrop = (event: DragEvent<HTMLDivElement>, targetKey?: string) => {
-    const fromKey = event.dataTransfer.getData(MONITOR_ROOM_DRAG_TYPE);
-    if (fromKey) {
-      event.preventDefault();
-      event.stopPropagation();
-      if (!targetKey || targetKey !== fromKey) {
-        setWorkspace((previous) => {
-          const from = previous.rooms.findIndex((room) => room.key === fromKey);
-          const to = targetKey
-            ? previous.rooms.findIndex((room) => room.key === targetKey)
-            : previous.rooms.length - 1;
-          if (from < 0 || to < 0 || from === to) return previous;
-          const next = [...previous.rooms];
-          const [moved] = next.splice(from, 1);
-          if (!moved) return previous;
-          next.splice(to, 0, moved);
-          return { ...previous, rooms: next };
-        });
-      }
-      return;
-    }
-
+  const handleDrop = (event: DragEvent<HTMLDivElement>) => {
     const followPayload = event.dataTransfer.getData(FOLLOW_ROOM_DRAG_TYPE);
     if (followPayload) {
       event.preventDefault();
@@ -256,9 +292,7 @@ export function MonitorPage() {
           className={cn(styles.empty, dragOver && styles.dropActive)}
           onDragOver={(event) => {
             event.preventDefault();
-            event.dataTransfer.dropEffect = event.dataTransfer.types.includes(FOLLOW_ROOM_DRAG_TYPE)
-              ? "copy"
-              : "move";
+            event.dataTransfer.dropEffect = "copy";
             setDragOver(true);
           }}
           onDragLeave={() => setDragOver(false)}
@@ -279,9 +313,7 @@ export function MonitorPage() {
           }}
           onDragOver={(event) => {
             event.preventDefault();
-            event.dataTransfer.dropEffect = event.dataTransfer.types.includes(FOLLOW_ROOM_DRAG_TYPE)
-              ? "copy"
-              : "move";
+            event.dataTransfer.dropEffect = "copy";
             setDragOver(true);
           }}
           onDragLeave={(event) => {
@@ -298,6 +330,8 @@ export function MonitorPage() {
                 room={room}
                 placement={placement}
                 focused={audioFocusKeys.includes(room.key)}
+                soundEnabled={globalAudioEnabled}
+                globalVolume={globalVolume}
                 onAudioFocus={handleAudioFocus}
                 onDanmakuToggle={(key) =>
                   setWorkspace((previous) => ({
@@ -317,6 +351,11 @@ export function MonitorPage() {
                     ),
                   }))
                 }
+                blockKeywords={danmuBlock.keywords}
+                blockKeywordsLower={danmuBlock.keywordsLower}
+                onAddBlockKeyword={danmuBlock.addKeyword}
+                onRemoveBlockKeyword={danmuBlock.removeKeyword}
+                onClearBlockKeywords={danmuBlock.clearKeywords}
                 onVolumeChange={(key, volume) => updateRoom(key, { volume })}
                 onQualityChange={(key, qualityId) => updateRoom(key, { qualityId })}
                 onRemove={removeRoom}

@@ -1,7 +1,12 @@
 import {
+  Maximize,
+  Monitor,
+  Minimize2,
   MessageSquare,
   MessageSquareOff,
   Move,
+  PanelRightClose,
+  PanelRightOpen,
   Pause,
   Play,
   RotateCw,
@@ -12,14 +17,17 @@ import {
 import { useEffect, useRef, useState, type PointerEvent } from "react";
 import { api, PLATFORM_LABEL, PLATFORM_LOGO, type DanmakuMessage, type StreamInfo } from "@/api";
 import { DanmuOverlay } from "@/features/player/DanmuOverlay";
+import { DanmuPanel } from "@/features/player/DanmuPanel";
+import { DanmuBlockControl } from "@/features/player/DanmuBlockControl";
 import { DanmuSettingsControl } from "@/features/player/DanmuSettingsControl";
-import type { DanmuUserSettings } from "@/features/player/danmuSettings";
+import { isDanmuBlocked, type DanmuUserSettings } from "@/features/player/danmuSettings";
 import { ControlsDropdown } from "@/features/player/ControlsDropdown";
 import { VolumeSlider } from "@/features/player/VolumeSlider";
 import { useXgPlayer } from "@/features/player/useXgPlayer";
 import { cn } from "@/lib/cn";
+import { toggleWindowFullscreen } from "@/lib/window";
+import { useToast } from "@/state/ToastProvider";
 import {
-  MONITOR_ROOM_DRAG_TYPE,
   type GridPlacement,
   type MonitorRoom,
   type MonitorTileSize,
@@ -33,9 +41,16 @@ interface RoomTileProps {
   room: MonitorRoom;
   placement: GridPlacement;
   focused: boolean;
+  soundEnabled: boolean;
+  globalVolume: number;
   onAudioFocus: (key: string, multiple: boolean) => void;
   onDanmakuToggle: (key: string) => void;
   onDanmakuSettingsChange: (key: string, patch: Partial<DanmuUserSettings>) => void;
+  blockKeywords: string[];
+  blockKeywordsLower: string[];
+  onAddBlockKeyword: (keyword: string) => boolean;
+  onRemoveBlockKeyword: (keyword: string) => void;
+  onClearBlockKeywords: () => void;
   onVolumeChange: (key: string, volume: number) => void;
   onQualityChange: (key: string, qualityId: string) => void;
   onRemove: (key: string) => void;
@@ -47,9 +62,16 @@ export function RoomTile({
   room,
   placement,
   focused,
+  soundEnabled,
+  globalVolume,
   onAudioFocus,
   onDanmakuToggle,
   onDanmakuSettingsChange,
+  blockKeywords,
+  blockKeywordsLower,
+  onAddBlockKeyword,
+  onRemoveBlockKeyword,
+  onClearBlockKeywords,
   onVolumeChange,
   onQualityChange,
   onRemove,
@@ -68,12 +90,95 @@ export function RoomTile({
     stepX: number;
     stepY: number;
   } | null>(null);
+  const moveGestureRef = useRef<{
+    pointerId: number;
+    startX: number;
+    startY: number;
+    timer: number;
+    active: boolean;
+  } | null>(null);
+  const onMoveRef = useRef(onMove);
+  onMoveRef.current = onMove;
   const messageBufferRef = useRef<DanmakuMessage[]>([]);
+  const blockKeywordsLowerRef = useRef(blockKeywordsLower);
+  blockKeywordsLowerRef.current = blockKeywordsLower;
   const reconnectAttemptRef = useRef(0);
   const [info, setInfo] = useState<StreamInfo | null>(null);
   const [infoError, setInfoError] = useState("");
   const [retryKey, setRetryKey] = useState(0);
   const [messages, setMessages] = useState<DanmakuMessage[]>([]);
+  const [longPressDragging, setLongPressDragging] = useState(false);
+  const [dropTarget, setDropTarget] = useState(false);
+  const [danmakuPanelOpen, setDanmakuPanelOpen] = useState(false);
+  const [tileFullscreen, setTileFullscreen] = useState(false);
+  const { toast } = useToast();
+
+  useEffect(() => {
+    const tileAtPoint = (event: globalThis.PointerEvent) =>
+      document
+        .elementFromPoint(event.clientX, event.clientY)
+        ?.closest<HTMLElement>("[data-monitor-room-key]");
+
+    const onPointerMove = (event: globalThis.PointerEvent) => {
+      const gesture = moveGestureRef.current;
+      if (!gesture || gesture.pointerId !== event.pointerId) return;
+      if (!gesture.active) {
+        if (Math.hypot(event.clientX - gesture.startX, event.clientY - gesture.startY) > 8) {
+          window.clearTimeout(gesture.timer);
+          moveGestureRef.current = null;
+        }
+        return;
+      }
+      const targetKey = tileAtPoint(event)?.dataset.monitorRoomKey;
+      setDropTarget(Boolean(targetKey && targetKey !== room.key));
+    };
+
+    const onPointerEnd = (event: globalThis.PointerEvent) => {
+      const gesture = moveGestureRef.current;
+      if (!gesture || gesture.pointerId !== event.pointerId) return;
+      window.clearTimeout(gesture.timer);
+      moveGestureRef.current = null;
+      setLongPressDragging(false);
+      setDropTarget(false);
+      if (!gesture.active || event.type === "pointercancel") return;
+      const targetKey = tileAtPoint(event)?.dataset.monitorRoomKey;
+      if (targetKey && targetKey !== room.key) onMoveRef.current(room.key, targetKey);
+    };
+
+    window.addEventListener("pointermove", onPointerMove);
+    window.addEventListener("pointerup", onPointerEnd);
+    window.addEventListener("pointercancel", onPointerEnd);
+    const onFullscreenChange = () =>
+      setTileFullscreen(document.fullscreenElement === tileRef.current);
+    document.addEventListener("fullscreenchange", onFullscreenChange);
+    return () => {
+      window.removeEventListener("pointermove", onPointerMove);
+      window.removeEventListener("pointerup", onPointerEnd);
+      window.removeEventListener("pointercancel", onPointerEnd);
+      document.removeEventListener("fullscreenchange", onFullscreenChange);
+      if (moveGestureRef.current) window.clearTimeout(moveGestureRef.current.timer);
+    };
+  }, [room.key]);
+
+  const beginMove = (event: PointerEvent<HTMLButtonElement>) => {
+    if (event.button !== 0 || event.isPrimary === false) return;
+    event.preventDefault();
+    event.currentTarget.setPointerCapture(event.pointerId);
+    if (moveGestureRef.current) window.clearTimeout(moveGestureRef.current.timer);
+    const gesture = {
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      timer: 0,
+      active: false,
+    };
+    gesture.timer = window.setTimeout(() => {
+      if (moveGestureRef.current !== gesture) return;
+      gesture.active = true;
+      setLongPressDragging(true);
+    }, 350);
+    moveGestureRef.current = gesture;
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -102,7 +207,10 @@ export function RoomTile({
     info?.variants[0];
   const source =
     info?.isLive && variant ? { url: variant.url, format: variant.format, nonce: retryKey } : null;
-  const player = useXgPlayer(playerHostRef, source, true, { volume: room.volume, muted: !focused });
+  const player = useXgPlayer(playerHostRef, source, true, {
+    volume: Math.min(2, room.volume * globalVolume),
+    muted: !focused || !soundEnabled,
+  });
 
   const beginResize = (event: PointerEvent<HTMLButtonElement>, axis: "x" | "y" | "both") => {
     event.preventDefault();
@@ -187,6 +295,7 @@ export function RoomTile({
       setMessages((previous) => [...previous, ...batch].slice(-MAX_MESSAGES));
     }, MESSAGE_FLUSH_MS);
     const unsubscribe = api.subscribeDanmaku(info.platform, info.roomId, (message) => {
+      if (isDanmuBlocked(message.content, blockKeywordsLowerRef.current)) return;
       const buffer = messageBufferRef.current;
       buffer.push(message);
       if (buffer.length > MAX_MESSAGES) buffer.splice(0, buffer.length - MAX_MESSAGES);
@@ -226,6 +335,19 @@ export function RoomTile({
     id: item.id,
     label: /蓝光|bluray/i.test(item.label) ? "蓝光" : item.label,
   }));
+  const toggleTileFullscreen = async () => {
+    const tile = tileRef.current;
+    if (!tile) return;
+    try {
+      if (document.fullscreenElement === tile) {
+        await document.exitFullscreen();
+      } else {
+        await tile.requestFullscreen();
+      }
+    } catch (error) {
+      toast(error instanceof Error ? `无法切换全屏：${error.message}` : "无法切换全屏", "error");
+    }
+  };
 
   return (
     <article
@@ -234,7 +356,10 @@ export function RoomTile({
         styles.tile,
         focused && styles.audioFocused,
         player.state === "playing" && styles.playing,
+        longPressDragging && styles.tileDragging,
+        dropTarget && styles.tileDropTarget,
       )}
+      data-monitor-room-key={room.key}
       onClickCapture={(event) => {
         const target = event.target;
         if (event.button !== 0) return;
@@ -244,18 +369,6 @@ export function RoomTile({
         )
           return;
         onAudioFocus(room.key, event.shiftKey);
-      }}
-      onDragOver={(event) => {
-        if (!event.dataTransfer.types.includes(MONITOR_ROOM_DRAG_TYPE)) return;
-        event.preventDefault();
-        event.dataTransfer.dropEffect = "move";
-      }}
-      onDrop={(event) => {
-        const fromKey = event.dataTransfer.getData(MONITOR_ROOM_DRAG_TYPE);
-        if (!fromKey || fromKey === room.key) return;
-        event.preventDefault();
-        event.stopPropagation();
-        onMove(fromKey, room.key);
       }}
       style={{
         gridColumn: `${placement.column} / span ${placement.columns}`,
@@ -273,6 +386,16 @@ export function RoomTile({
             colorfulSupported={["douyu", "huya", "bilibili"].includes(room.platform)}
             platform={room.platform}
           />
+        )}
+        {danmakuPanelOpen && (
+          <div className={styles.danmakuPanel}>
+            <DanmuPanel
+              messages={messages}
+              platform={room.platform}
+              width={240}
+              onClose={() => setDanmakuPanelOpen(false)}
+            />
+          </div>
         )}
         {infoError || (info && !info.isLive) || (info?.isLive && !variant) ? (
           <div className={styles.status} role={infoError ? "alert" : "status"}>
@@ -298,15 +421,13 @@ export function RoomTile({
 
         <header className={styles.header}>
           <div
+            role="presentation"
             className={styles.dragHandle}
-            draggable
-            onDragStart={(event) => {
-              event.dataTransfer.effectAllowed = "move";
-              event.dataTransfer.setData(MONITOR_ROOM_DRAG_TYPE, room.key);
-            }}
-            title="拖到另一房间以交换位置和尺寸"
+            title="按住拖动到另一房间以交换位置和尺寸"
           >
-            <Move size={13} />
+            <button type="button" aria-label="长按拖动房间" onPointerDown={beginMove}>
+              <Move size={13} />
+            </button>
           </div>
           <img className={styles.logo} src={PLATFORM_LOGO[room.platform]} alt="" />
           <div className={styles.roomMeta}>
@@ -356,7 +477,6 @@ export function RoomTile({
             </button>
           </div>
           <div className={styles.volumeControl}>
-            <Volume2 size={19} aria-hidden="true" />
             <VolumeSlider
               className={styles.volumeSlider}
               label="房间音量"
@@ -399,6 +519,22 @@ export function RoomTile({
             >
               {room.danmakuEnabled ? <MessageSquare size={18} /> : <MessageSquareOff size={18} />}
             </button>
+            <DanmuBlockControl
+              keywords={blockKeywords}
+              onAdd={onAddBlockKeyword}
+              onRemove={onRemoveBlockKeyword}
+              onClear={onClearBlockKeywords}
+            />
+            <button
+              type="button"
+              className={cn(styles.iconButton, danmakuPanelOpen && styles.activeButton)}
+              onClick={() => setDanmakuPanelOpen((open) => !open)}
+              aria-pressed={danmakuPanelOpen}
+              title={danmakuPanelOpen ? "关闭弹幕列表" : "打开弹幕列表"}
+              aria-label={danmakuPanelOpen ? "关闭弹幕列表" : "打开弹幕列表"}
+            >
+              {danmakuPanelOpen ? <PanelRightClose size={18} /> : <PanelRightOpen size={18} />}
+            </button>
             <DanmuSettingsControl
               settings={room.danmakuSettings}
               onChange={(patch) => onDanmakuSettingsChange(room.key, patch)}
@@ -411,6 +547,24 @@ export function RoomTile({
               options={qualityOptions}
               onSelect={(qualityId) => onQualityChange(room.key, qualityId)}
             />
+            <button
+              type="button"
+              className={styles.iconButton}
+              onClick={() => void toggleWindowFullscreen()}
+              title="切换应用窗口全屏"
+              aria-label="切换应用窗口全屏"
+            >
+              <Monitor size={18} />
+            </button>
+            <button
+              type="button"
+              className={styles.iconButton}
+              onClick={() => void toggleTileFullscreen()}
+              title={tileFullscreen ? "退出直播间全屏" : "直播间全屏"}
+              aria-label={tileFullscreen ? "退出直播间全屏" : "直播间全屏"}
+            >
+              {tileFullscreen ? <Minimize2 size={18} /> : <Maximize size={18} />}
+            </button>
           </div>
         </footer>
         <button

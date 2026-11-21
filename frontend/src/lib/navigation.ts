@@ -1,7 +1,6 @@
 import { useCallback } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import type { LivePlatform } from "@/api";
-import { loadJSON, STORAGE_KEYS } from "./storage";
 
 /** 直播间的 URL 形状与老项目保持一致（`/player?platform=&roomId=`）。 */
 export function playerPath(platform: LivePlatform, roomId: string): string {
@@ -24,36 +23,10 @@ export function platformHomePath(platform: LivePlatform): string {
  */
 export function applyStartupLanding(): void {
   if (typeof window === "undefined") return;
-
   const hash = window.location.hash;
-  if (hash && hash !== "#/" && hash !== "#") return;
-
-  let saved: unknown = [];
-  try {
-    saved = loadJSON<unknown>(STORAGE_KEYS.subscriptions, []);
-  } catch {
-    return;
+  if (!hash || hash === "#") {
+    window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}#/`);
   }
-  if (!Array.isArray(saved) || saved.length === 0) return;
-
-  // 和 SubscriptionProvider.normalize 的判定保持一致：至少有一条
-  // 平台合法、cate2Id 非空的记录，才认为"确实订阅过分区"。
-  const hasValid = saved.some((item) => {
-    if (!item || typeof item !== "object") return false;
-    const record = item as Record<string, unknown>;
-    const platform = String(record.platform ?? "").toLowerCase();
-    if (!["douyu", "huya", "douyin", "bilibili"].includes(platform)) return false;
-    const keyId = String(record.key ?? "").split(":")[1] ?? "";
-    const cate2Id = String(record.cate2Id ?? record.douyuId ?? record.cate2Href ?? keyId).trim();
-    return Boolean(cate2Id);
-  });
-  if (!hasValid) return;
-
-  window.history.replaceState(
-    null,
-    "",
-    `${window.location.pathname}${window.location.search}#/subscribe`,
-  );
 }
 
 /**

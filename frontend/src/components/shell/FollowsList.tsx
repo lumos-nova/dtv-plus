@@ -4,24 +4,26 @@ import {
   Folder,
   FolderMinus,
   FolderPlus,
-  ListCollapse,
+  Link2,
   PanelLeftClose,
   PanelLeftOpen,
   Pencil,
   RotateCw,
+  Search,
   Trash2,
   Users,
   X,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { createPortal } from "react-dom";
 import { SmoothImage } from "@/components/common/SmoothImage";
 import { RingProgress } from "@/components/ui/RingProgress";
 import { Modal } from "@/components/ui/Modal";
 import { cn } from "@/lib/cn";
 import { useOpenPlayer } from "@/lib/navigation";
-import { PLATFORM_LABEL, type LivePlatform } from "@/api";
+import { api, PLATFORM_LABEL, PLATFORM_LOGO, type LivePlatform } from "@/api";
 import { FOLLOW_ROOM_DRAG_TYPE } from "@/features/multiview/layout";
+import { parseLiveRoomUrl } from "@/features/multiview/roomUrl";
 import { followKey, useFollow, type FollowRecord } from "@/state/FollowProvider";
 import { useToast } from "@/state/ToastProvider";
 import styles from "./FollowsList.module.css";
@@ -69,6 +71,8 @@ export function FollowsList({
   const { toast } = useToast();
   const {
     follows,
+    isFollowing,
+    toggleFollow,
     topLevel,
     folders,
     moveToFolder,
@@ -93,8 +97,16 @@ export function FollowsList({
   const [dragSourceFolder, setDragSourceFolder] = useState<string | null>(null);
   const [dragFolderId, setDragFolderId] = useState<string | null>(null);
   const [dragOverKey, setDragOverKey] = useState<string | null>(null);
-  const [overlayOpen, setOverlayOpen] = useState(false);
-  const [overlayFilter, setOverlayFilter] = useState<"ALL" | LivePlatform>("ALL");
+  const [platformFilter, setPlatformFilter] = useState<"ALL" | LivePlatform>("ALL");
+  const [onlineOnly, setOnlineOnly] = useState(false);
+  const [searchInput, setSearchInput] = useState("");
+  const [searchKeyword, setSearchKeyword] = useState("");
+  const [addRoomOpen, setAddRoomOpen] = useState(false);
+  const [addRoomUrl, setAddRoomUrl] = useState("");
+  const [addRoomBusy, setAddRoomBusy] = useState(false);
+  const [addRoomFeedback, setAddRoomFeedback] = useState("");
+  const [addRoomError, setAddRoomError] = useState(false);
+  const [addRoomPosition, setAddRoomPosition] = useState({ left: 12, top: 80 });
   const [collapsedFolder, setCollapsedFolder] = useState<{
     folderId: string;
     left: number;
@@ -102,6 +114,9 @@ export function FollowsList({
   } | null>(null);
   const collapsedCloseTimer = useRef<number | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
+  const addRoomInputRef = useRef<HTMLInputElement | null>(null);
+  const addRoomTriggerRef = useRef<HTMLButtonElement | null>(null);
+  const addRoomPopoverRef = useRef<HTMLDivElement | null>(null);
   const contentRef = useRef<HTMLDivElement | null>(null);
   const listRefs = useRef<Map<string, HTMLUListElement>>(new Map());
   const [hoverBox, setHoverBox] = useState<{
@@ -149,6 +164,38 @@ export function FollowsList({
     if (dialog) inputRef.current?.focus();
   }, [dialog]);
 
+  useEffect(() => {
+    if (!addRoomOpen) return;
+    addRoomInputRef.current?.focus();
+    const closeOutside = (event: MouseEvent) => {
+      if (
+        !addRoomTriggerRef.current?.contains(event.target as Node) &&
+        !addRoomPopoverRef.current?.contains(event.target as Node)
+      ) {
+        setAddRoomOpen(false);
+      }
+    };
+    const closeEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setAddRoomOpen(false);
+    };
+    const reposition = () => {
+      const rect = addRoomTriggerRef.current?.getBoundingClientRect();
+      if (!rect) return;
+      setAddRoomPosition({
+        left: Math.max(12, Math.min(rect.left, window.innerWidth - 532)),
+        top: Math.max(12, Math.min(rect.bottom + 8, window.innerHeight - 300)),
+      });
+    };
+    document.addEventListener("mousedown", closeOutside);
+    window.addEventListener("keydown", closeEscape, true);
+    window.addEventListener("resize", reposition);
+    return () => {
+      document.removeEventListener("mousedown", closeOutside);
+      window.removeEventListener("keydown", closeEscape, true);
+      window.removeEventListener("resize", reposition);
+    };
+  }, [addRoomOpen]);
+
   /* 对话框统一支持 Esc 关闭（删除确认没有输入框，之前关不掉） */
   useEffect(() => {
     if (!dialog) return;
@@ -158,15 +205,6 @@ export function FollowsList({
     window.addEventListener("keydown", onKey, true);
     return () => window.removeEventListener("keydown", onKey, true);
   }, [dialog]);
-
-  useEffect(() => {
-    if (!overlayOpen) return;
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setOverlayOpen(false);
-    };
-    window.addEventListener("keydown", onKey, true);
-    return () => window.removeEventListener("keydown", onKey, true);
-  }, [overlayOpen]);
 
   useEffect(() => {
     return () => {
@@ -224,7 +262,6 @@ export function FollowsList({
 
   const openPlayer = useCallback(
     (record: FollowRecord) => {
-      setOverlayOpen(false);
       setCollapsedFolder(null);
       // 已经在看 A 房间时，B 会替换掉 A 的历史记录：旧房间彻底销毁，
       // 从 B 退出时回到列表而不是自动重新进入 A（见 lib/navigation.ts）。
@@ -254,6 +291,34 @@ export function FollowsList({
     }
   }, [refreshing, refreshStatuses, toast]);
 
+  const submitAddRoom = useCallback(
+    async (event: FormEvent<HTMLFormElement>) => {
+      event.preventDefault();
+      const url = addRoomUrl.trim();
+      if (!url || addRoomBusy) return;
+      setAddRoomBusy(true);
+      setAddRoomError(false);
+      setAddRoomFeedback("");
+      try {
+        const parsed = parseLiveRoomUrl(url);
+        const info = await api.getRoomInfo(parsed.platform, parsed.roomId);
+        if (isFollowing(info.platform, info.id)) {
+          setAddRoomFeedback("该直播间已在关注列表中");
+        } else {
+          toggleFollow(info);
+          setAddRoomFeedback(`已关注 ${info.nickname}`);
+        }
+        setAddRoomUrl("");
+      } catch (reason) {
+        setAddRoomError(true);
+        setAddRoomFeedback(reason instanceof Error ? reason.message : "无法识别或关注该直播间");
+      } finally {
+        setAddRoomBusy(false);
+      }
+    },
+    [addRoomBusy, addRoomUrl, isFollowing, toggleFollow],
+  );
+
   const cancelCollapsedFolderClose = useCallback(() => {
     if (collapsedCloseTimer.current != null) {
       window.clearTimeout(collapsedCloseTimer.current);
@@ -268,6 +333,18 @@ export function FollowsList({
       collapsedCloseTimer.current = null;
     }, 180);
   }, [cancelCollapsedFolderClose]);
+
+  const toggleAddRoomPopover = useCallback(() => {
+    const rect = addRoomTriggerRef.current?.getBoundingClientRect();
+    if (rect) {
+      setAddRoomPosition({
+        left: Math.max(12, Math.min(rect.left, window.innerWidth - 532)),
+        top: Math.max(12, Math.min(rect.bottom + 8, window.innerHeight - 300)),
+      });
+    }
+    setAddRoomOpen((open) => !open);
+    setAddRoomFeedback("");
+  }, []);
 
   const openCollapsedFolder = useCallback(
     (folderId: string, el: HTMLElement) => {
@@ -432,29 +509,34 @@ export function FollowsList({
     [clearDrag, dragKey, dragSourceFolder, dragType, removeFromFolder],
   );
 
-  const allFollows = useMemo(
-    () => [...topLevel, ...folders.flatMap((folder) => folder.records)],
-    [folders, topLevel],
+  const matchesFilter = useCallback(
+    (record: FollowRecord) =>
+      (platformFilter === "ALL" || record.platform === platformFilter) &&
+      (!onlineOnly || record.isLive) &&
+      (!searchKeyword ||
+        `${record.nickname} ${record.title} ${record.id}`
+          .toLocaleLowerCase()
+          .includes(searchKeyword)),
+    [onlineOnly, platformFilter, searchKeyword],
   );
-
-  const overlayFollows = useMemo(() => {
-    const base =
-      overlayFilter === "ALL"
-        ? allFollows
-        : allFollows.filter((record) => record.platform === overlayFilter);
-    return [...base].sort((a, b) => Number(b.isLive) - Number(a.isLive));
-  }, [allFollows, overlayFilter]);
-
-  const overlayPlatforms = useMemo(() => {
-    const present = new Set(allFollows.map((record) => record.platform));
-    const order: LivePlatform[] = ["douyu", "huya", "douyin", "bilibili"];
-    return order.filter((platform) => present.has(platform));
-  }, [allFollows]);
-
-  const liveCount = useMemo(
-    () => allFollows.filter((record) => record.isLive).length,
-    [allFollows],
+  const visibleTopLevel = useMemo(() => topLevel.filter(matchesFilter), [matchesFilter, topLevel]);
+  const visibleFolders = useMemo(
+    () =>
+      folders
+        .map((folder) => ({
+          ...folder,
+          records: folder.records.filter(matchesFilter),
+        }))
+        .filter(
+          (folder) =>
+            folder.records.length > 0 ||
+            (platformFilter === "ALL" && !onlineOnly && !searchKeyword),
+        ),
+    [folders, matchesFilter, onlineOnly, platformFilter, searchKeyword],
   );
+  const visibleCount =
+    visibleTopLevel.length +
+    visibleFolders.reduce((count, folder) => count + folder.records.length, 0);
 
   // 绑成 const，TS 才能在下面的闭包里保持类型收窄（menu 是 state）
   const menuTarget: MenuTarget | null = menu?.target ?? null;
@@ -500,6 +582,11 @@ export function FollowsList({
     const sourceFolderId = opts.inFolderId ?? folderOf(key) ?? null;
     const compact = collapsed && !opts.forceExpanded;
     const draggable = !opts.plain;
+    const status = /轮播|循环|回放/.test(`${record.title} ${record.nickname}`)
+      ? "轮播中"
+      : record.isLive
+        ? "直播中"
+        : "未开播";
     return (
       <li key={`${key}@${opts.inFolderId ?? "top"}`} className={styles.rowWrap}>
         <div
@@ -545,7 +632,18 @@ export function FollowsList({
           </span>
           {!compact && (
             <span className={styles.rowMain}>
-              <span className={styles.rowName}>{record.nickname}</span>
+              <span className={styles.rowName}>
+                {record.nickname}
+                <span
+                  className={cn(
+                    styles.statusBadge,
+                    status === "直播中" && styles.statusLive,
+                    status === "轮播中" && styles.statusRotating,
+                  )}
+                >
+                  {status}
+                </span>
+              </span>
               <span className={styles.rowTitle}>{record.title || "暂无直播标题"}</span>
             </span>
           )}
@@ -556,7 +654,7 @@ export function FollowsList({
 
   return (
     <div className={cn(styles.root, collapsed && styles.collapsed)}>
-      <div className={cn(styles.header, styles.drag, collapsed && styles.collapsedHeader)}>
+      <div className={cn(styles.header, collapsed && styles.collapsedHeader)}>
         {collapsed ? (
           <>
             <button
@@ -568,20 +666,17 @@ export function FollowsList({
             >
               <PanelLeftOpen size={16} />
             </button>
-            {refreshButton}
             <button
+              ref={addRoomTriggerRef}
               type="button"
               className={cn(styles.actionBtn, styles.noDrag)}
-              onClick={() => {
-                setCollapsedFolder(null);
-                setOverlayFilter("ALL");
-                setOverlayOpen(true);
-              }}
-              aria-label="展开全部主播"
-              title="展开全部主播"
+              onClick={toggleAddRoomPopover}
+              aria-label="添加直播间"
+              title="添加直播间"
             >
-              <ListCollapse size={16} />
+              <Link2 size={16} />
             </button>
+            {refreshButton}
           </>
         ) : (
           <>
@@ -590,6 +685,16 @@ export function FollowsList({
             </div>
             <div className={styles.headerActions}>
               {refreshButton}
+              <button
+                ref={addRoomTriggerRef}
+                type="button"
+                className={cn(styles.actionBtn, styles.noDrag)}
+                onClick={toggleAddRoomPopover}
+                aria-label="添加直播间"
+                title="添加直播间"
+              >
+                <Link2 size={16} strokeWidth={2.2} />
+              </button>
               <button
                 type="button"
                 className={cn(styles.actionBtn, styles.noDrag)}
@@ -600,19 +705,6 @@ export function FollowsList({
                 title="新建分组"
               >
                 <FolderPlus size={16} strokeWidth={2.2} />
-              </button>
-              <button
-                type="button"
-                className={cn(styles.actionBtn, styles.noDrag)}
-                onClick={() => {
-                  setCollapsedFolder(null);
-                  setOverlayFilter("ALL");
-                  setOverlayOpen(true);
-                }}
-                aria-label="展开全部主播"
-                title="展开全部主播"
-              >
-                <ListCollapse size={16} />
               </button>
               <button
                 type="button"
@@ -640,16 +732,92 @@ export function FollowsList({
         }}
         onDrop={onMainDrop}
       >
+        {!collapsed && (
+          <>
+            <div className={styles.filterBar} aria-label="关注主播筛选">
+              <button
+                type="button"
+                className={cn(
+                  styles.filterBtn,
+                  styles.allFilter,
+                  platformFilter === "ALL" && styles.filterActive,
+                )}
+                onClick={() => setPlatformFilter("ALL")}
+                title="全部平台"
+                aria-label="全部平台"
+                aria-pressed={platformFilter === "ALL"}
+              >
+                全部
+              </button>
+              <button
+                type="button"
+                className={cn(
+                  styles.filterBtn,
+                  styles.onlineFilter,
+                  onlineOnly && styles.filterActive,
+                )}
+                onClick={() => setOnlineOnly((value) => !value)}
+                title="仅看在线直播"
+                aria-label="仅看在线直播"
+                aria-pressed={onlineOnly}
+              >
+                在线
+              </button>
+              {(["douyu", "huya", "douyin", "bilibili"] as LivePlatform[]).map((platform) => (
+                <button
+                  key={platform}
+                  type="button"
+                  className={cn(
+                    styles.filterBtn,
+                    platformFilter === platform && styles.filterActive,
+                  )}
+                  onClick={() => setPlatformFilter(platform)}
+                  title={PLATFORM_LABEL[platform]}
+                  aria-label={`仅看${PLATFORM_LABEL[platform]}`}
+                  aria-pressed={platformFilter === platform}
+                >
+                  <img src={PLATFORM_LOGO[platform]} alt="" />
+                </button>
+              ))}
+            </div>
+            <form
+              className={styles.followSearch}
+              onSubmit={(event) => {
+                event.preventDefault();
+                setSearchKeyword(searchInput.trim().toLocaleLowerCase());
+              }}
+            >
+              <Search size={14} aria-hidden="true" />
+              <input
+                type="search"
+                placeholder="搜索已关注主播，按回车"
+                value={searchInput}
+                onChange={(event) => {
+                  const value = event.target.value;
+                  setSearchInput(value);
+                  if (!value) setSearchKeyword("");
+                }}
+                aria-label="搜索已关注主播"
+              />
+            </form>
+          </>
+        )}
         {follows.length === 0 ? (
           !collapsed && (
             <div className={styles.empty}>
               <p className={styles.emptyTitle}>暂无关注的主播</p>
             </div>
           )
+        ) : visibleCount === 0 ? (
+          !collapsed && (
+            <div className={styles.empty}>
+              <p className={styles.emptyTitle}>没有匹配的主播</p>
+            </div>
+          )
         ) : (
           <>
             {!collapsed &&
-              folders.map((folder) => {
+              visibleFolders.map((folder) => {
                 const expanded = !folder.collapsed;
                 const online = folder.records.filter((record) => record.isLive).length;
                 return (
@@ -743,7 +911,7 @@ export function FollowsList({
 
             {collapsed ? (
               <>
-                {folders.map((folder) => (
+                {visibleFolders.map((folder) => (
                   <button
                     key={folder.id}
                     type="button"
@@ -759,7 +927,9 @@ export function FollowsList({
                     <span className={styles.collapsedFolderCount}>{folder.records.length}</span>
                   </button>
                 ))}
-                <ul className={styles.list}>{topLevel.map((record) => renderRow(record, {}))}</ul>
+                <ul className={styles.list}>
+                  {visibleTopLevel.map((record) => renderRow(record, {}))}
+                </ul>
               </>
             ) : (
               <ul
@@ -780,12 +950,57 @@ export function FollowsList({
                     }}
                   />
                 )}
-                {topLevel.map((record) => renderRow(record, { listId: "top" }))}
+                {visibleTopLevel.map((record) => renderRow(record, { listId: "top" }))}
               </ul>
             )}
           </>
         )}
       </div>
+
+      {addRoomOpen &&
+        createPortal(
+          <div
+            ref={addRoomPopoverRef}
+            className={styles.addRoomPopover}
+            style={{ left: addRoomPosition.left, top: addRoomPosition.top }}
+            role="dialog"
+            aria-label="添加直播间"
+          >
+            <form onSubmit={(event) => void submitAddRoom(event)}>
+              <div className={styles.addRoomHeading}>
+                <strong>添加直播间</strong>
+                <button
+                  type="button"
+                  className={styles.addRoomClose}
+                  onClick={() => setAddRoomOpen(false)}
+                  aria-label="关闭"
+                >
+                  <X size={15} />
+                </button>
+              </div>
+              <p>粘贴直播间链接，识别平台后自动关注</p>
+              <div className={styles.addRoomForm}>
+                <input
+                  ref={addRoomInputRef}
+                  value={addRoomUrl}
+                  onChange={(event) => setAddRoomUrl(event.target.value)}
+                  placeholder="粘贴斗鱼、虎牙、抖音或 B 站链接"
+                  aria-label="直播间链接"
+                  disabled={addRoomBusy}
+                />
+                <button type="submit" disabled={addRoomBusy || !addRoomUrl.trim()}>
+                  {addRoomBusy ? "识别中…" : "解析并关注"}
+                </button>
+              </div>
+              {addRoomFeedback && (
+                <span className={addRoomError ? styles.addRoomError : styles.addRoomSuccess}>
+                  {addRoomFeedback}
+                </span>
+              )}
+            </form>
+          </div>,
+          document.body,
+        )}
 
       {/* ------------------------------------------------ 折叠态文件夹悬浮弹窗 */}
       {collapsed &&
@@ -827,104 +1042,6 @@ export function FollowsList({
             document.body,
           );
         })()}
-
-      {/* ------------------------------------------------------ 全部主播弹层 */}
-      {overlayOpen &&
-        createPortal(
-          <div
-            className={styles.overlayBackdrop}
-            onMouseDown={(event) => {
-              if (event.target === event.currentTarget) setOverlayOpen(false);
-            }}
-          >
-            <div
-              className={styles.overlayPanel}
-              role="dialog"
-              aria-modal="true"
-              aria-label="全部关注"
-              onMouseDown={(event) => event.stopPropagation()}
-            >
-              <header className={styles.overlayHeader}>
-                <div className={styles.overlayHeading}>
-                  <h3 className={styles.overlayTitle}>全部关注</h3>
-                  <p className={styles.overlaySubtitle}>
-                    {follows.length} 位主播 · {liveCount} 正在直播
-                  </p>
-                </div>
-                <button
-                  type="button"
-                  className={styles.overlayClose}
-                  onClick={() => setOverlayOpen(false)}
-                  aria-label="关闭"
-                >
-                  <X size={16} strokeWidth={2.4} />
-                </button>
-              </header>
-
-              {overlayPlatforms.length > 0 && (
-                <div className={styles.overlayFilters}>
-                  <button
-                    type="button"
-                    className={cn(
-                      styles.overlayFilter,
-                      overlayFilter === "ALL" && styles.overlayFilterActive,
-                    )}
-                    onClick={() => setOverlayFilter("ALL")}
-                  >
-                    全部
-                  </button>
-                  {overlayPlatforms.map((platform) => (
-                    <button
-                      key={platform}
-                      type="button"
-                      className={cn(
-                        styles.overlayFilter,
-                        overlayFilter === platform && styles.overlayFilterActive,
-                      )}
-                      onClick={() => setOverlayFilter(platform)}
-                    >
-                      {PLATFORM_LABEL[platform]}
-                    </button>
-                  ))}
-                </div>
-              )}
-
-              {overlayFollows.length === 0 ? (
-                <p className={styles.overlayEmpty}>还没有关注的主播</p>
-              ) : (
-                <div className={styles.overlayGrid}>
-                  {overlayFollows.map((record) => (
-                    <button
-                      key={followKey(record.platform, record.id)}
-                      type="button"
-                      className={styles.overlayCard}
-                      onClick={() => openPlayer(record)}
-                      title={record.title || record.nickname}
-                    >
-                      <span className={styles.overlayAvatarWrap}>
-                        <span className={styles.overlayAvatar}>
-                          <SmoothImage src={record.avatar} alt={record.nickname} rounded />
-                        </span>
-                        <span
-                          className={cn(
-                            styles.liveDot,
-                            record.isLive ? styles.liveDotOn : styles.liveDotOff,
-                          )}
-                          aria-hidden="true"
-                        />
-                      </span>
-                      <span className={styles.overlayMeta}>
-                        <span className={styles.overlayName}>{record.nickname}</span>
-                        <span className={styles.overlayRoom}>{record.title || "暂无直播标题"}</span>
-                      </span>
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
-          </div>,
-          document.body,
-        )}
 
       {/* ------------------------------------------------------------ 右键菜单 */}
       {menu && menuTarget && (

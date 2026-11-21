@@ -7,7 +7,6 @@ import { BilibiliAuthProvider } from "./state/BilibiliAuthProvider";
 import { DouyuAuthProvider } from "./state/DouyuAuthProvider";
 import { FollowProvider } from "./state/FollowProvider";
 import { PlayerUiProvider } from "./state/PlayerUiProvider";
-import { SubscriptionProvider } from "./state/SubscriptionProvider";
 import { ThemeProvider } from "./state/ThemeProvider";
 import { ToastProvider } from "./state/ToastProvider";
 
@@ -49,9 +48,7 @@ export function App() {
               <BilibiliAuthProvider>
                 <DouyuAuthProvider>
                   <PlayerUiProvider>
-                    <SubscriptionProvider>
-                      <RouteBoundary />
-                    </SubscriptionProvider>
+                    <RouteBoundary />
                   </PlayerUiProvider>
                 </DouyuAuthProvider>
               </BilibiliAuthProvider>

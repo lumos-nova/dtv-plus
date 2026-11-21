@@ -1,42 +1,18 @@
-import { Check, Github, MonitorSmartphone, Palette } from "lucide-react";
+import { Check, Github, Palette, Settings } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
-import { useLocation } from "react-router-dom";
-import { PLATFORM_TAB_ORDER, type LivePlatform } from "@/api";
 import { PlatformTabs } from "@/components/shell/PlatformTabs";
 import { SearchBox } from "@/components/shell/SearchBox";
 import { WindowControls } from "@/components/shell/WindowControls";
-import { LanSyncModal } from "@/features/sync/LanSyncModal";
+import { SettingsModal } from "@/features/settings/SettingsModal";
+import { DanmakuQuickControl } from "@/features/settings/DanmakuQuickControl";
+import { WatchAudioControl } from "@/features/settings/WatchAudioControl";
 import { cn } from "@/lib/cn";
 import { getTheme, THEMES, type ThemeId } from "@/lib/themes";
 import { isMacOS, openExternalURL, useDesktopOS } from "@/lib/window";
 import { useTheme } from "@/state/ThemeProvider";
 import styles from "./Navbar.module.css";
 
-type ModalKind = "sync" | null;
-
-/** 当前路由对应的平台；订阅页没有平台上下文（返回 null）。 */
-function platformFromPath(pathname: string, search: string): LivePlatform | null {
-  if (
-    pathname.startsWith("/subscribe") ||
-    pathname.startsWith("/custom") ||
-    pathname.startsWith("/add-room") ||
-    pathname.startsWith("/monitor")
-  ) {
-    return null;
-  }
-  // 播放页跟着房间的平台走（搜索框也按该平台工作）
-  if (pathname.startsWith("/player")) {
-    const platform = new URLSearchParams(search).get("platform");
-    if (platform && (PLATFORM_TAB_ORDER as readonly string[]).includes(platform)) {
-      return platform as LivePlatform;
-    }
-    return "douyu";
-  }
-  if (pathname.startsWith("/huya")) return "huya";
-  if (pathname.startsWith("/douyin")) return "douyin";
-  if (pathname.startsWith("/bilibili")) return "bilibili";
-  return "douyu";
-}
+type ModalKind = "settings" | null;
 
 /**
  * 顶栏（自绘标题栏）。
@@ -49,7 +25,6 @@ function platformFromPath(pathname: string, search: string): LivePlatform | null
  * 每行两个，当前默认是「青柠·夜」。
  */
 export function Navbar() {
-  const { pathname, search } = useLocation();
   const { theme, setTheme } = useTheme();
   const desktopOS = useDesktopOS();
   const isMac = desktopOS === "darwin" || isMacOS();
@@ -57,7 +32,6 @@ export function Navbar() {
   const [paletteOpen, setPaletteOpen] = useState(false);
   const paletteWrapRef = useRef<HTMLDivElement>(null);
 
-  const platform = platformFromPath(pathname, search);
   const currentTheme = getTheme(theme);
 
   /* 配色面板：点击外部 / Esc 关闭 */
@@ -85,15 +59,17 @@ export function Navbar() {
 
   return (
     <>
-      <nav className={cn(styles.navbar, styles.drag)}>
+      <nav className={styles.navbar}>
         <div className={styles.leading}>
           <PlatformTabs />
         </div>
 
         <div className={styles.actions}>
-          {platform && <SearchBox platform={platform} />}
+          <SearchBox />
 
           <div className={styles.toolGroup}>
+            <WatchAudioControl />
+            <DanmakuQuickControl />
             <button
               type="button"
               className={cn(styles.iconBtn, styles.noDrag)}
@@ -107,11 +83,11 @@ export function Navbar() {
             <button
               type="button"
               className={cn(styles.iconBtn, styles.noDrag)}
-              onClick={() => setModal("sync")}
-              aria-label="数据同步"
-              title="数据同步"
+              onClick={() => setModal("settings")}
+              aria-label="设置"
+              title="设置"
             >
-              <MonitorSmartphone size={18} strokeWidth={2} />
+              <Settings size={18} strokeWidth={2} />
             </button>
 
             <div className={styles.paletteWrap} ref={paletteWrapRef}>
@@ -195,7 +171,7 @@ export function Navbar() {
       </nav>
 
       {/* 弹窗放在 nav 之外：nav 自身有 z-index，作为子节点会被侧栏盖住。 */}
-      {modal === "sync" && <LanSyncModal onClose={() => setModal(null)} />}
+      {modal === "settings" && <SettingsModal onClose={() => setModal(null)} />}
     </>
   );
 }

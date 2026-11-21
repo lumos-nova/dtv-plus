@@ -1,33 +1,17 @@
 import { Card, ListBox } from "@heroui/react";
 import { Search, X } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { api, PLATFORM_LABEL, type LivePlatform, type SearchHit } from "@/api";
+import { api, PLATFORM_LABEL, PLATFORM_TAB_ORDER, type LivePlatform, type SearchHit } from "@/api";
 import { SmoothImage } from "@/components/common/SmoothImage";
 import { Spinner } from "@/components/ui/Spinner";
 import { cn } from "@/lib/cn";
 import { useOpenPlayer } from "@/lib/navigation";
 import styles from "./SearchBox.module.css";
 
-const PLACEHOLDER: Record<LivePlatform, string> = {
-  douyu: "搜索关键词或直播间号…",
-  huya: "搜索关键词或直播间号…",
-  douyin: "输入抖音直播间号…",
-  bilibili: "搜索关键词或直播间号…",
-};
-
-const SEARCH_HINT: Record<LivePlatform, string> = {
-  douyu: "支持关键词与直播间号，↑↓ 选择，Enter 打开",
-  huya: "支持关键词与直播间号，↑↓ 选择，Enter 打开",
-  douyin: "抖音仅支持直播间号，输入后按 Enter 进入",
-  bilibili: "支持关键词与直播间号，↑↓ 选择，Enter 打开",
-};
-
-interface SearchBoxProps {
-  platform: LivePlatform;
-}
+type SearchResult = SearchHit & { platform: LivePlatform; key: string };
 
 /**
- * 平台搜索框。
+ * 跨平台搜索框。
  *
  * 旧版把搜索状态（query/results/error/focused/防抖/外部点击关闭/Esc 清空）
  * 全部塞在 800 行的 Navbar 里，还靠 `eslint-disable exhaustive-deps` 兜底。
@@ -35,12 +19,13 @@ interface SearchBoxProps {
  *
  * U-04：↑/↓ 在结果间移动、Enter 打开当前项、Esc 关闭；Ctrl/Cmd+K 聚焦。
  */
-export function SearchBox({ platform }: SearchBoxProps) {
+export function SearchBox() {
   const openRoomNavigation = useOpenPlayer();
   const [query, setQuery] = useState("");
-  const [hits, setHits] = useState<SearchHit[]>([]);
+  const [hits, setHits] = useState<SearchResult[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [warning, setWarning] = useState<string | null>(null);
   const [focused, setFocused] = useState(false);
   const [activeIndex, setActiveIndex] = useState(-1);
   const rootRef = useRef<HTMLDivElement>(null);
@@ -71,38 +56,63 @@ export function SearchBox({ platform }: SearchBoxProps) {
     if (!kw) {
       setHits([]);
       setError(null);
+      setWarning(null);
       setLoading(false);
       return;
     }
     let cancelled = false;
+    setHits([]);
     setLoading(true);
     setError(null);
+    setWarning(null);
+    const platforms = PLATFORM_TAB_ORDER.filter(
+      (platform) => platform !== "douyin" || /^\d+$/.test(kw),
+    );
     const timer = window.setTimeout(() => {
-      api
-        .search(platform, kw)
-        .then((result) => {
-          if (cancelled) return;
-          setHits(result);
+      void Promise.allSettled(
+        platforms.map(async (platform) => ({
+          platform,
+          hits: await api.search(platform, kw),
+        })),
+      ).then((results) => {
+        if (cancelled) return;
+        const successful = results.filter(
+          (
+            result,
+          ): result is PromiseFulfilledResult<{
+            platform: LivePlatform;
+            hits: SearchHit[];
+          }> => result.status === "fulfilled",
+        );
+        const failedCount = results.length - successful.length;
+        if (successful.length === 0) {
+          const failure = results.find((result) => result.status === "rejected");
+          setError(
+            failure?.status === "rejected" && failure.reason instanceof Error
+              ? failure.reason.message
+              : "所有平台搜索失败",
+          );
           setLoading(false);
-        })
-        .catch((err: unknown) => {
-          if (cancelled) return;
-          setError(err instanceof Error ? err.message : "搜索失败");
-          setLoading(false);
-        });
+          return;
+        }
+        setHits(
+          successful.flatMap(({ value }) =>
+            value.hits.map((hit) => ({
+              ...hit,
+              platform: value.platform,
+              key: `${value.platform}:${hit.id}`,
+            })),
+          ),
+        );
+        setWarning(failedCount > 0 ? `${failedCount} 个平台搜索失败，已显示其余结果` : null);
+        setLoading(false);
+      });
     }, 220);
     return () => {
       cancelled = true;
       window.clearTimeout(timer);
     };
-  }, [query, platform]);
-
-  // 切换平台时清空
-  useEffect(() => {
-    setQuery("");
-    setHits([]);
-    hideHover();
-  }, [platform, hideHover]);
+  }, [query]);
 
   useEffect(() => {
     hideHover();
@@ -132,26 +142,26 @@ export function SearchBox({ platform }: SearchBoxProps) {
   }, []);
 
   const openRoom = useCallback(
-    (roomId: string) => {
+    (result: SearchResult) => {
       setFocused(false);
       setQuery("");
       // 进入直播间后把焦点还给页面：否则焦点留在搜索框里，
       // 播放页的空格 / Esc / F 等快捷键会因为“正在输入”而被忽略。
       inputRef.current?.blur();
       // 从播放页搜索另一个房间时同样 replace：不把旧直播间留在历史栈里。
-      openRoomNavigation(platform, roomId);
+      openRoomNavigation(result.platform, result.id);
     },
-    [openRoomNavigation, platform],
+    [openRoomNavigation],
   );
 
   const onSubmit = () => {
     const kw = query.trim();
     if (!kw) return;
     if (activeIndex >= 0 && hits[activeIndex]) {
-      openRoom(hits[activeIndex].id);
-      return;
+      openRoom(hits[activeIndex]);
+    } else if (hits.length === 1) {
+      openRoom(hits[0]);
     }
-    if (/^\d+$/.test(kw)) openRoom(kw);
   };
 
   const moveActive = (delta: number) => {
@@ -199,9 +209,9 @@ export function SearchBox({ platform }: SearchBoxProps) {
               inputRef.current?.blur();
             }
           }}
-          placeholder={PLACEHOLDER[platform]}
-          aria-label={PLACEHOLDER[platform]}
-          title={SEARCH_HINT[platform]}
+          placeholder="搜索所有平台主播或直播间…"
+          aria-label="搜索所有平台主播或直播间"
+          title="搜索所有平台关键词或房间号，↑↓ 选择，Enter 打开"
           spellCheck={false}
         />
         {query && (
@@ -229,71 +239,72 @@ export function SearchBox({ platform }: SearchBoxProps) {
         <Card className={styles.panel} onMouseLeave={hideHover}>
           <div className={styles.panelHead}>
             <span className={styles.panelTitle}>搜索结果</span>
-            <span className={styles.panelCount}>
-              {loading ? "搜索中" : `${hits.length} 条`}
-            </span>
+            <span className={styles.panelCount}>{loading ? "搜索中" : `${hits.length} 条`}</span>
           </div>
 
           {error ? (
             <p className={styles.meta}>{error}</p>
-          ) : !loading && hits.length === 0 ? (
-            <p className={styles.meta}>
-              {platform === "douyin"
-                ? "未找到该直播间，请检查直播间号"
-                : "未找到结果，试试直接输入房间号"}
-            </p>
           ) : (
-            <div
-              className={styles.listWrap}
-              ref={listWrapRef}
-              onScroll={hideHover}
-              onMouseLeave={hideHover}
-            >
-              <div
-                className={styles.hoverLayer}
-                style={{
-                  opacity: hoverBox.visible ? 1 : 0,
-                  transform: `translate3d(0, ${hoverBox.top}px, 0)`,
-                  height: hoverBox.height,
-                }}
-                aria-hidden="true"
-              />
-              <ListBox
-                className={styles.list}
-                aria-label="搜索结果"
-                selectionMode="none"
-                onAction={(key) => openRoom(String(key))}
-              >
-                {hits.map((hit, index) => (
-                  <ListBox.Item
-                    key={hit.id}
-                    id={hit.id}
-                    textValue={`${hit.nickname} ${hit.title}`}
-                    className={cn(styles.item, activeIndex === index && styles.itemActive)}
-                    data-search-index={index}
-                    onMouseEnter={(event) => {
-                      showHover(event.currentTarget);
-                      setActiveIndex(index);
+            <>
+              {warning && <p className={styles.meta}>{warning}</p>}
+              {!loading && hits.length === 0 ? (
+                <p className={styles.meta}>未找到结果，请检查关键词或房间号</p>
+              ) : (
+                <div
+                  className={styles.listWrap}
+                  ref={listWrapRef}
+                  onScroll={hideHover}
+                  onMouseLeave={hideHover}
+                >
+                  <div
+                    className={styles.hoverLayer}
+                    style={{
+                      opacity: hoverBox.visible ? 1 : 0,
+                      transform: `translate3d(0, ${hoverBox.top}px, 0)`,
+                      height: hoverBox.height,
                     }}
-                    onMouseDown={(e) => e.preventDefault()}
+                    aria-hidden="true"
+                  />
+                  <ListBox
+                    className={styles.list}
+                    aria-label="搜索结果"
+                    selectionMode="none"
+                    onAction={(key) => {
+                      const result = hits.find((hit) => hit.key === String(key));
+                      if (result) openRoom(result);
+                    }}
                   >
-                    <span className={styles.avatar}>
-                      <SmoothImage src={hit.avatar} alt={hit.nickname} rounded />
-                    </span>
-                    <span className={styles.itemMain}>
-                      <span className={styles.itemName}>{hit.nickname}</span>
-                      <span className={styles.itemTitle}>{hit.title}</span>
-                    </span>
-                    <span className={cn(styles.dot, hit.isLive && styles.dotLive)} />
-                  </ListBox.Item>
-                ))}
-              </ListBox>
-            </div>
+                    {hits.map((hit, index) => (
+                      <ListBox.Item
+                        key={hit.key}
+                        id={hit.key}
+                        textValue={`${PLATFORM_LABEL[hit.platform]} ${hit.nickname} ${hit.title}`}
+                        className={cn(styles.item, activeIndex === index && styles.itemActive)}
+                        data-search-index={index}
+                        onMouseEnter={(event) => {
+                          showHover(event.currentTarget);
+                          setActiveIndex(index);
+                        }}
+                        onMouseDown={(e) => e.preventDefault()}
+                      >
+                        <span className={styles.avatar}>
+                          <SmoothImage src={hit.avatar} alt={hit.nickname} rounded />
+                        </span>
+                        <span className={styles.itemMain}>
+                          <span className={styles.itemName}>{hit.nickname}</span>
+                          <span className={styles.itemTitle}>{hit.title}</span>
+                        </span>
+                        <span className={styles.platformTag}>{PLATFORM_LABEL[hit.platform]}</span>
+                        <span className={cn(styles.dot, hit.isLive && styles.dotLive)} />
+                      </ListBox.Item>
+                    ))}
+                  </ListBox>
+                </div>
+              )}
+            </>
           )}
 
-          <p className={styles.hint}>
-            {PLATFORM_LABEL[platform]} · {SEARCH_HINT[platform]}
-          </p>
+          <p className={styles.hint}>搜索所有已接入平台 · 抖音仅支持房间号</p>
         </Card>
       )}
     </div>

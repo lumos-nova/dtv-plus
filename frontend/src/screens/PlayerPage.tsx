@@ -1,9 +1,4 @@
-import {
-  MonitorOff,
-  RotateCw,
-  Star,
-  X,
-} from "lucide-react";
+import { MonitorOff, RotateCw, Star, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import {
@@ -31,6 +26,7 @@ import { PlayerControls } from "@/features/player/PlayerControls";
 import { isDanmuBlocked } from "@/features/player/danmuSettings";
 import { useDanmuBlock } from "@/features/player/useDanmuBlock";
 import { useDanmuPreferences } from "@/features/player/useDanmuPreferences";
+import { loadAppSettings } from "@/lib/appSettings";
 import { useXgPlayer, type PlayerSource } from "@/features/player/useXgPlayer";
 import { cn } from "@/lib/cn";
 import { isFatalError, stripFatalPrefix } from "@/lib/errors";
@@ -92,9 +88,7 @@ function isTypingTarget(target: EventTarget | null): boolean {
  * 所以这里直接 return 后，它们仍然能收到这一次按键。
  */
 function hasOpenOverlay(): boolean {
-  return Boolean(
-    document.querySelector('[role="dialog"], [role="menu"], [class*="menuBackdrop"]'),
-  );
+  return Boolean(document.querySelector('[role="dialog"], [role="menu"], [class*="menuBackdrop"]'));
 }
 
 const SHORTCUTS: Array<[string, string]> = [
@@ -122,13 +116,8 @@ export function PlayerPage() {
   const reconnectTimerRef = useRef<number | null>(null);
   const reconnectAttemptRef = useRef(0);
 
-  const {
-    nativeFullscreen,
-    cssFullscreen,
-    setNativeFullscreen,
-    setCssFullscreen,
-    isFullscreen,
-  } = usePlayerUi();
+  const { nativeFullscreen, cssFullscreen, setNativeFullscreen, setCssFullscreen, isFullscreen } =
+    usePlayerUi();
   const { isFollowing, toggleFollow } = useFollow();
   const { toast } = useToast();
 
@@ -208,9 +197,7 @@ export function PlayerPage() {
       setRetryAttempt(attempt);
       setReconnecting(true);
 
-      const delay = immediate
-        ? 0
-        : Math.min(30_000, 2_000 * 2 ** Math.min(attempt - 1, 4));
+      const delay = immediate ? 0 : Math.min(30_000, 2_000 * 2 ** Math.min(attempt - 1, 4));
       clearReconnectTimer();
       reconnectTimerRef.current = window.setTimeout(() => {
         reconnectTimerRef.current = null;
@@ -230,6 +217,9 @@ export function PlayerPage() {
   /* ------------------------------------------- 悬浮 chrome 的自动隐藏（全屏） */
   const [chromeHidden, setChromeHidden] = useState(false);
   const [chromeHover, setChromeHover] = useState(false);
+  const [globalAudioEnabled, setGlobalAudioEnabled] = useState(
+    () => loadAppSettings().globalAudioEnabled,
+  );
   const chromeIdleTimer = useRef<number | null>(null);
 
   useEffect(() => {
@@ -277,8 +267,8 @@ export function PlayerPage() {
     saveRaw(STORAGE_KEYS.danmuPanelWidth, String(panelWidth));
   }, [panelWidth]);
 
-  const [qualityId, setQualityId] = useState<string>(() =>
-    loadRaw(STORAGE_KEYS.playerQuality(platform), "source") || "source",
+  const [qualityId, setQualityId] = useState<string>(
+    () => loadRaw(STORAGE_KEYS.playerQuality(platform), "source") || "source",
   );
   const [lineId, setLineId] = useState<string | null>(() => {
     const saved = loadRaw(STORAGE_KEYS.playerLine(platform), "");
@@ -433,7 +423,7 @@ export function PlayerPage() {
     return info.variants.find((item) => item.id === String(variant.appliedRate)) ?? null;
   }, [info, variant]);
   const currentQualityLabel = variant
-    ? appliedVariant?.label ?? (variant.unconfirmed ? `未确认 · ${variant.label}` : null)
+    ? (appliedVariant?.label ?? (variant.unconfirmed ? `未确认 · ${variant.label}` : null))
     : null;
 
   // U-06：未开播不拉流，避免无谓的重连与"流加载失败"
@@ -480,7 +470,7 @@ export function PlayerPage() {
 
   // 中继地址还没就绪时先不建播放器，避免"先直连再重建"导致闪一下
   const relayReady = !relayKey || relay?.key === relayKey;
-  const relayURL = relay?.key === relayKey ? relay?.url ?? null : null;
+  const relayURL = relay?.key === relayKey ? (relay?.url ?? null) : null;
   const playerSource: PlayerSource | null =
     info?.isLive && relayReady
       ? relayURL
@@ -490,6 +480,22 @@ export function PlayerPage() {
           : null
       : null;
   const player = useXgPlayer(playerHostRef, playerSource, true);
+  const { setMuted: setPlayerMuted, state: playerState } = player;
+
+  useEffect(() => {
+    setPlayerMuted(!globalAudioEnabled);
+  }, [globalAudioEnabled, playerState, setPlayerMuted]);
+
+  useEffect(() => {
+    const onGlobalAudio = (event: Event) => {
+      const detail = (event as CustomEvent<{ enabled?: boolean }>).detail;
+      if (typeof detail?.enabled === "boolean") setGlobalAudioEnabled(detail.enabled);
+    };
+    window.addEventListener("dtv:global-audio", onGlobalAudio);
+    return () => {
+      window.removeEventListener("dtv:global-audio", onGlobalAudio);
+    };
+  }, []);
 
   /* 未开播：每 30 秒自动刷新一次房间信息 */
   useEffect(() => {
@@ -800,9 +806,7 @@ export function PlayerPage() {
   }, [exitPlayerFullscreen, navigate]);
 
   const followed = info ? isFollowing(info.platform, info.roomId) : false;
-  const colorfulSupported = Boolean(
-    info && COLORFUL_DANMU_PLATFORMS.includes(info.platform),
-  );
+  const colorfulSupported = Boolean(info && COLORFUL_DANMU_PLATFORMS.includes(info.platform));
 
   /* ------------------------------------------------------------------ 渲染 */
   if (!roomId) {
@@ -823,10 +827,7 @@ export function PlayerPage() {
       <div className={cn(styles.playerShell, isFullscreen && styles.shellFull)}>
         <div className={styles.playerBody}>
           <div className={styles.stageCol}>
-            <div
-              className={cn(styles.stage, chromeHidden && styles.stageIdle)}
-              ref={stageRef}
-            >
+            <div className={cn(styles.stage, chromeHidden && styles.stageIdle)} ref={stageRef}>
               <div className={styles.videoHost} ref={playerHostRef} />
 
               {/* 样式全屏时应用标题栏被隐藏：铺一层拖拽区，按住画面就能移动窗口。
@@ -908,12 +909,8 @@ export function PlayerPage() {
                         />
                         {followed ? "已关注" : "关注"}
                       </button>
-                      {info.platform === "bilibili" && (
-                        <BilibiliLoginButton variant="compact" />
-                      )}
-                      {info.platform === "douyu" && (
-                        <DouyuLoginButton variant="compact" />
-                      )}
+                      {info.platform === "bilibili" && <BilibiliLoginButton variant="compact" />}
+                      {info.platform === "douyu" && <DouyuLoginButton variant="compact" />}
                     </div>
                   )}
                 </div>

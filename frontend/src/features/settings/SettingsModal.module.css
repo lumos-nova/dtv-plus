@@ -1,0 +1,115 @@
+.sections {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-height: min(70vh, 620px);
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--fill-quaternary);
+}
+
+.section h3 {
+  margin: 0 0 2px;
+  font-size: 14px;
+  color: var(--text-primary);
+}
+
+.accountRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  min-height: 34px;
+  padding: 0 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--fill-tertiary);
+  color: var(--text-primary);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.action:hover {
+  background: var(--fill-secondary);
+}
+
+.field {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.field {
+  align-items: flex-start;
+  flex-direction: column;
+}
+
+.field span,
+.hint {
+  color: var(--text-tertiary);
+  font-size: 11px;
+}
+
+.field input {
+  width: 100px;
+  height: 34px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  padding: 0 9px;
+}
+
+.field input[type="range"],
+.field select {
+  width: min(100%, 260px);
+}
+
+.hint {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+}
+
+.reminderToggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.reminderToggle input {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  accent-color: var(--accent);
+}
+
+@media (max-width: 560px) {
+  .reminderToggle {
+    min-height: 34px;
+  }
+}

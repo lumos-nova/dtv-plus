@@ -225,6 +225,16 @@
   text-overflow: ellipsis;
 }
 
+.platformTag {
+  flex: 0 0 auto;
+  padding: 2px 6px;
+  border-radius: var(--radius-full);
+  color: var(--text-tertiary);
+  background: var(--fill-quaternary);
+  font-size: 10px;
+  white-space: nowrap;
+}
+
 .dot {
   width: 7px;
   height: 7px;
@@ -266,8 +276,8 @@
 /* 键盘导航的当前项 */
 .itemActive,
 .itemActive:hover,
-.itemActive[data-hovered='true'],
-.itemActive[data-focused='true'] {
+.itemActive[data-hovered="true"],
+.itemActive[data-focused="true"] {
   background: var(--fill-quaternary);
 }
 

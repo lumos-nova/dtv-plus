@@ -14,13 +14,35 @@ import {
  * 之后任何变化都写回同一个键。设置面板只改 partial，归一化在这里统一做。
  */
 export function useDanmuPreferences() {
-  const [preferences, setPreferences] = useState<DanmuPreferences>(() =>
-    loadDanmuPreferences(),
-  );
+  const [preferences, setPreferences] = useState<DanmuPreferences>(() => loadDanmuPreferences());
 
   useEffect(() => {
     saveDanmuPreferences(preferences);
   }, [preferences]);
+
+  useEffect(() => {
+    const onGlobalDanmaku = (event: Event) => {
+      const detail = (event as CustomEvent<{ enabled?: boolean }>).detail;
+      if (typeof detail?.enabled === "boolean") {
+        setPreferences((previous) => ({ ...previous, enabled: detail.enabled ?? true }));
+      }
+    };
+    const onGlobalSettings = (event: Event) => {
+      const detail = (event as CustomEvent<Partial<DanmuUserSettings>>).detail;
+      if (detail) {
+        setPreferences((previous) => ({
+          ...previous,
+          settings: normalizeDanmuSettings({ ...previous.settings, ...detail }),
+        }));
+      }
+    };
+    window.addEventListener("dtv:global-danmaku", onGlobalDanmaku);
+    window.addEventListener("dtv:global-danmaku-settings", onGlobalSettings);
+    return () => {
+      window.removeEventListener("dtv:global-danmaku", onGlobalDanmaku);
+      window.removeEventListener("dtv:global-danmaku-settings", onGlobalSettings);
+    };
+  }, []);
 
   const setEnabled = useCallback((enabled: boolean) => {
     setPreferences((prev) => ({ ...prev, enabled }));

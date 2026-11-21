@@ -48,7 +48,6 @@ export const ROUTES = {
   huya: "/huya",
   douyin: "/douyin",
   bilibili: "/bilibili",
-  subscribe: "/subscribe",
   addRoom: "/add-room",
   monitor: "/monitor",
   custom: "/custom",
@@ -77,10 +76,10 @@ export function AppRoutes() {
         <Route path="/huya" element={<HomeRoute />} />
         <Route path="/douyin" element={<HomeRoute />} />
         <Route path="/bilibili" element={<HomeRoute />} />
-        <Route path="/subscribe" element={<HomeRoute />} />
         <Route path="/add-room" element={<AddRoomPage />} />
         <Route path="/monitor" element={<MonitorPage />} />
-        <Route path="/custom" element={<Navigate to="/subscribe" replace />} />
+        <Route path="/subscribe" element={<Navigate to="/" replace />} />
+        <Route path="/custom" element={<Navigate to="/" replace />} />
         <Route
           path="/player"
           element={
