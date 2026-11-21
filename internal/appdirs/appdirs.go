@@ -2,8 +2,11 @@
 package appdirs
 
 import (
+	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 // ConfigDir 返回 %APPDATA%\DTV（窗口位置、用户配置等可漫游数据）。
@@ -26,12 +29,17 @@ func LocalAppData() string {
 
 // ImageCacheDir 返回图片代理的磁盘缓存目录。
 func ImageCacheDir() string {
-	return filepath.Join(LocalAppData(), "image-cache")
+	return StoragePaths().CacheDir
 }
 
 // LogsDir 返回日志目录。
 func LogsDir() string {
-	return filepath.Join(LocalAppData(), "logs")
+	return StoragePaths().LogsDir
+}
+
+// RecordingsDir 返回直播回溯与录制文件的默认保存目录。
+func RecordingsDir() string {
+	return StoragePaths().RecordingsDir
 }
 
 // WebView2Dir 返回 WebView2 用户数据目录（避免写入漫游配置）。
@@ -43,4 +51,111 @@ func WebView2Dir() string {
 func Ensure(path string) string {
 	_ = os.MkdirAll(path, 0o755)
 	return path
+}
+
+// StoragePaths stores user-selectable locations for local application data.
+type StorageDirs struct {
+	CacheDir      string `json:"cacheDir"`
+	LogsDir       string `json:"logsDir"`
+	RecordingsDir string `json:"recordingsDir"`
+}
+
+func DefaultStoragePaths() StorageDirs {
+	base := LocalAppData()
+	return StorageDirs{
+		CacheDir:      filepath.Join(base, "image-cache"),
+		LogsDir:       filepath.Join(base, "logs"),
+		RecordingsDir: filepath.Join(base, "recordings"),
+	}
+}
+
+func storagePathsFile() string {
+	return filepath.Join(ConfigDir(), "storage_paths.json")
+}
+
+// StoragePaths returns the configured paths, falling back field-by-field to defaults.
+func StoragePaths() StorageDirs {
+	defaults := DefaultStoragePaths()
+	data, err := os.ReadFile(storagePathsFile())
+	if err != nil {
+		return defaults
+	}
+	var configured StorageDirs
+	if json.Unmarshal(data, &configured) != nil {
+		return defaults
+	}
+
+	configured.CacheDir = validConfiguredPath(configured.CacheDir, defaults.CacheDir)
+	configured.LogsDir = validConfiguredPath(configured.LogsDir, defaults.LogsDir)
+	configured.RecordingsDir = validConfiguredPath(configured.RecordingsDir, defaults.RecordingsDir)
+	return configured
+}
+
+func validConfiguredPath(path, fallback string) string {
+	path = strings.TrimSpace(path)
+	if path == "" || !filepath.IsAbs(path) {
+		return fallback
+	}
+	return filepath.Clean(path)
+}
+
+// NormalizeStoragePaths validates paths and creates all selected directories.
+func NormalizeStoragePaths(paths StorageDirs) (StorageDirs, error) {
+	defaults := DefaultStoragePaths()
+	targets := []struct {
+		label    string
+		target   *string
+		fallback string
+	}{
+		{label: "缓存", target: &paths.CacheDir, fallback: defaults.CacheDir},
+		{label: "日志", target: &paths.LogsDir, fallback: defaults.LogsDir},
+		{label: "录制", target: &paths.RecordingsDir, fallback: defaults.RecordingsDir},
+	}
+	for _, item := range targets {
+		value := strings.TrimSpace(*item.target)
+		if value == "" {
+			value = item.fallback
+		}
+		absolute, err := filepath.Abs(value)
+		if err != nil {
+			return StorageDirs{}, fmt.Errorf("解析%s目录失败：%w", item.label, err)
+		}
+		if err := os.MkdirAll(absolute, 0o755); err != nil {
+			return StorageDirs{}, fmt.Errorf("创建%s目录失败：%w", item.label, err)
+		}
+		info, err := os.Stat(absolute)
+		if err != nil {
+			return StorageDirs{}, fmt.Errorf("检查%s目录失败：%w", item.label, err)
+		}
+		if !info.IsDir() {
+			return StorageDirs{}, fmt.Errorf("%s路径不是目录", item.label)
+		}
+		*item.target = filepath.Clean(absolute)
+	}
+	return paths, nil
+}
+
+// SaveStoragePaths persists validated paths in the user config directory.
+func SaveStoragePaths(paths StorageDirs) error {
+	normalized, err := NormalizeStoragePaths(paths)
+	if err != nil {
+		return err
+	}
+	data, err := json.MarshalIndent(normalized, "", "  ")
+	if err != nil {
+		return fmt.Errorf("序列化存储设置失败：%w", err)
+	}
+	if err := os.MkdirAll(ConfigDir(), 0o755); err != nil {
+		return fmt.Errorf("创建配置目录失败：%w", err)
+	}
+	path := storagePathsFile()
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, data, 0o600); err != nil {
+		return fmt.Errorf("写入存储设置失败：%w", err)
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		_ = os.Remove(tmp)
+		return fmt.Errorf("保存存储设置失败：%w", err)
+	}
+	return nil
 }

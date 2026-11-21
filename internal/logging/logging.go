@@ -2,6 +2,7 @@
 package logging
 
 import (
+	"errors"
 	"io"
 	"log/slog"
 	"os"
@@ -22,12 +23,56 @@ type rotatingWriter struct {
 	size int64
 }
 
+type switchingWriter struct {
+	mu     sync.Mutex
+	writer *rotatingWriter
+}
+
+var setupMu sync.Mutex
+var activeWriter *switchingWriter
+
 func newRotatingWriter(dir string) (*rotatingWriter, error) {
 	w := &rotatingWriter{dir: dir}
 	if err := w.open(); err != nil {
 		return nil, err
 	}
 	return w, nil
+}
+
+func (w *rotatingWriter) Close() error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.file == nil {
+		return nil
+	}
+	err := w.file.Close()
+	w.file = nil
+	return err
+}
+
+func (w *switchingWriter) Write(p []byte) (int, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.writer == nil {
+		return len(p), nil
+	}
+	return w.writer.Write(p)
+}
+
+func (w *switchingWriter) replace(next *rotatingWriter) *rotatingWriter {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	previous := w.writer
+	w.writer = next
+	return previous
+}
+
+func (w *switchingWriter) Close() error {
+	previous := w.replace(nil)
+	if previous == nil {
+		return nil
+	}
+	return previous.Close()
 }
 
 func (w *rotatingWriter) open() error {
@@ -45,16 +90,20 @@ func (w *rotatingWriter) open() error {
 	return nil
 }
 
-func (w *rotatingWriter) rotate() {
-	if w.file == nil {
-		return
+func (w *rotatingWriter) rotate() error {
+	if w.file != nil {
+		path := w.file.Name()
+		if err := w.file.Close(); err != nil {
+			w.file = nil
+			return err
+		}
+		w.file = nil
+		if err := os.Rename(path, path+".1"); err != nil {
+			return err
+		}
 	}
-	path := w.file.Name()
-	_ = w.file.Close()
-	_ = os.Rename(path, path+".1")
-	w.file = nil
 	w.size = 0
-	_ = w.open()
+	return w.open()
 }
 
 func (w *rotatingWriter) Write(p []byte) (int, error) {
@@ -62,11 +111,18 @@ func (w *rotatingWriter) Write(p []byte) (int, error) {
 	defer w.mu.Unlock()
 
 	// 跨天或超过大小上限时滚动
-	if w.file == nil || time.Now().Format("20060102") != w.day || w.size+int64(len(p)) > maxLogBytes {
-		w.rotate()
+	if w.file == nil {
+		if err := w.open(); err != nil {
+			return 0, err
+		}
+	}
+	if time.Now().Format("20060102") != w.day || w.size+int64(len(p)) > maxLogBytes {
+		if err := w.rotate(); err != nil {
+			return 0, err
+		}
 	}
 	if w.file == nil {
-		return len(p), nil
+		return 0, errors.New("日志文件未打开")
 	}
 	n, err := w.file.Write(p)
 	w.size += int64(n)
@@ -80,16 +136,62 @@ func Setup() func() {
 	writer, err := newRotatingWriter(dir)
 	if err != nil {
 		// 日志目录不可写时退回 stderr，不能让应用起不来
-		slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, nil)))
-		return func() {}
+		route := &switchingWriter{}
+		setupMu.Lock()
+		activeWriter = route
+		setupMu.Unlock()
+		slog.SetDefault(slog.New(slog.NewTextHandler(io.MultiWriter(os.Stderr, route), nil)))
+		return func() {
+			setupMu.Lock()
+			if activeWriter == route {
+				activeWriter = nil
+			}
+			setupMu.Unlock()
+			_ = route.Close()
+		}
 	}
 
-	multi := io.MultiWriter(os.Stderr, writer)
+	route := &switchingWriter{writer: writer}
+	setupMu.Lock()
+	activeWriter = route
+	setupMu.Unlock()
+	multi := io.MultiWriter(os.Stderr, route)
 	handler := slog.NewTextHandler(multi, &slog.HandlerOptions{Level: slog.LevelInfo})
 	slog.SetDefault(slog.New(handler))
 	slog.Info("日志已启用", "dir", dir)
 
 	return func() {
-		_ = writer.file.Close()
+		setupMu.Lock()
+		if activeWriter == route {
+			activeWriter = nil
+		}
+		setupMu.Unlock()
+		_ = route.Close()
 	}
+}
+
+// SetDirectory switches future log writes to the selected directory.
+func SetDirectory(dir string) error {
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
+	}
+	next, err := newRotatingWriter(dir)
+	if err != nil {
+		return err
+	}
+
+	setupMu.Lock()
+	route := activeWriter
+	if route == nil {
+		setupMu.Unlock()
+		_ = next.Close()
+		return errors.New("日志输出尚未初始化")
+	}
+	previous := route.replace(next)
+	setupMu.Unlock()
+	if previous != nil {
+		_ = previous.Close()
+	}
+	slog.Info("日志目录已更改", "dir", dir)
+	return nil
 }

@@ -1,5 +1,6 @@
 import {
   Maximize,
+  Eye,
   Monitor,
   Minimize2,
   MessageSquare,
@@ -9,11 +10,13 @@ import {
   Pause,
   Play,
   RotateCw,
+  Square,
   Volume2,
   VolumeX,
   X,
 } from "lucide-react";
 import { useEffect, useRef, useState, type PointerEvent } from "react";
+import { createPortal } from "react-dom";
 import { api, PLATFORM_LABEL, PLATFORM_LOGO, type DanmakuMessage, type StreamInfo } from "@/api";
 import { DanmuOverlay } from "@/features/player/DanmuOverlay";
 import { DanmuPanel } from "@/features/player/DanmuPanel";
@@ -33,6 +36,10 @@ import {
   type MonitorTileSize,
   type ResizeDirection,
 } from "./layout";
+import { convertReplay, type ReplayFormat } from "./replayExport";
+import { clearRoomReplayStats, setRoomReplayStats } from "./recordingStats";
+import { saveRecording } from "./saveRecording";
+import { useRoomRecording } from "./useRoomRecording";
 import styles from "./RoomTile.module.css";
 
 const MAX_MESSAGES = 120;
@@ -54,6 +61,8 @@ const RESIZE_HANDLES: { direction: ResizeDirection; className: string; label: st
 interface RoomTileProps {
   room: MonitorRoom;
   placement: GridPlacement;
+  replayEnabled: boolean;
+  replaySeconds: number;
   focused: boolean;
   soundEnabled: boolean;
   globalVolume: number;
@@ -71,6 +80,7 @@ interface RoomTileProps {
   onLineChange: (key: string, lineId: string) => void;
   onQualityChange: (key: string, qualityId: string) => void;
   onRemove: (key: string) => void;
+  onGroupChange: (key: string, group: string) => void;
   onMove: (fromKey: string, clientX: number, clientY: number) => void;
   onDraggingChange: (key: string, dragging: boolean) => void;
   onDragPositionChange: (key: string, clientX: number, clientY: number) => void;
@@ -80,6 +90,8 @@ interface RoomTileProps {
 export function RoomTile({
   room,
   placement,
+  replayEnabled,
+  replaySeconds,
   focused,
   soundEnabled,
   globalVolume,
@@ -97,6 +109,7 @@ export function RoomTile({
   onLineChange,
   onQualityChange,
   onRemove,
+  onGroupChange,
   onMove,
   onDraggingChange,
   onDragPositionChange,
@@ -333,6 +346,100 @@ export function RoomTile({
     volume: Math.min(2, room.volume * globalVolume),
     muted: !focused || !soundEnabled,
   });
+  const recording = useRoomRecording(player.mediaElement, replayEnabled, replaySeconds);
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
+  const [exportingReplay, setExportingReplay] = useState<ReplayFormat | null>(null);
+  const [replayPreviewUrl, setReplayPreviewUrl] = useState("");
+  const contextMenuRef = useRef<HTMLDivElement>(null);
+
+  // 把本房间的回溯缓冲上报到全局统计，供「存储设置」弹窗汇总展示。
+  useEffect(() => {
+    setRoomReplayStats(room.key, {
+      bytes: recording.bufferedBytes,
+      seconds: recording.bufferedSeconds,
+    });
+  }, [room.key, recording.bufferedBytes, recording.bufferedSeconds]);
+
+  useEffect(() => () => clearRoomReplayStats(room.key), [room.key]);
+
+  useEffect(() => {
+    if (!contextMenu) return;
+    const onPointerDown = (event: globalThis.PointerEvent) => {
+      if (!contextMenuRef.current?.contains(event.target as Node)) setContextMenu(null);
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setContextMenu(null);
+    };
+    document.addEventListener("pointerdown", onPointerDown);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("pointerdown", onPointerDown);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [contextMenu]);
+
+  useEffect(() => {
+    if (recording.error) toast(recording.error, "error");
+  }, [recording.error, toast]);
+
+  useEffect(
+    () => () => {
+      if (replayPreviewUrl) URL.revokeObjectURL(replayPreviewUrl);
+    },
+    [replayPreviewUrl],
+  );
+
+  const openReplayPreview = () => {
+    const blob = recording.replayBlob();
+    if (!blob) {
+      toast("回溯缓冲尚未准备好", "info");
+      return;
+    }
+    setReplayPreviewUrl(URL.createObjectURL(blob));
+    setContextMenu(null);
+  };
+
+  const saveReplay = async (format: ReplayFormat) => {
+    const raw = recording.replayBlob();
+    if (!raw) {
+      toast("回溯缓冲尚未准备好", "info");
+      return;
+    }
+    setContextMenu(null);
+    setExportingReplay(format);
+    try {
+      const blob = await convertReplay(raw, format);
+      const filename = `dtv-${room.platform}-${room.roomId}-${Date.now()}.${format}`;
+      const path = await saveRecording(blob, filename);
+      if (path) toast(`回溯已保存：${path}`, "success");
+    } catch (error) {
+      toast(error instanceof Error ? `保存回溯失败：${error.message}` : "保存回溯失败", "error");
+    } finally {
+      setExportingReplay(null);
+    }
+  };
+
+  const stopAndSaveRecording = async () => {
+    setContextMenu(null);
+    try {
+      const blob = await recording.stopRecording();
+      if (!blob) {
+        toast("没有可保存的录制内容", "info");
+        return;
+      }
+      const filename = `dtv-${room.platform}-${room.roomId}-${Date.now()}.webm`;
+      const path = await saveRecording(blob, filename);
+      if (path) toast(`录制已保存：${path}`, "success");
+    } catch (error) {
+      toast(error instanceof Error ? `保存录制失败：${error.message}` : "保存录制失败", "error");
+    }
+  };
+
+  const assignGroup = () => {
+    const group = window.prompt("输入直播间分组名称", room.group ?? "");
+    if (group !== null) onGroupChange(room.key, group.trim().slice(0, 40));
+    setContextMenu(null);
+  };
 
   const beginResize = (event: PointerEvent<HTMLButtonElement>, direction: ResizeDirection) => {
     if (event.button !== 0 || event.isPrimary === false) return;
@@ -460,6 +567,13 @@ export function RoomTile({
         dropTarget && styles.tileDropTarget,
       )}
       data-monitor-room-key={room.key}
+      onContextMenu={(event) => {
+        event.preventDefault();
+        setContextMenu({
+          x: Math.min(event.clientX, window.innerWidth - 236),
+          y: Math.min(event.clientY, window.innerHeight - 310),
+        });
+      }}
       onClickCapture={(event) => {
         const target = event.target;
         if (event.button !== 0) return;
@@ -484,6 +598,7 @@ export function RoomTile({
         zIndex: windowFullscreen ? 25 : undefined,
       }}
       aria-label={`${PLATFORM_LABEL[room.platform]}房间 ${room.roomId}`}
+      aria-haspopup="menu"
     >
       <div className={styles.media}>
         <div ref={playerHostRef} className={styles.playerHost} />
@@ -513,6 +628,7 @@ export function RoomTile({
               type="button"
               className={styles.retryButton}
               onClick={() => setRetryKey((key) => key + 1)}
+              disabled={recording.isRecording}
             >
               重新获取
             </button>
@@ -535,12 +651,14 @@ export function RoomTile({
             <span className={styles.roomNumber}>
               {PLATFORM_LABEL[room.platform]} · {room.roomId}
             </span>
+            {room.group && <span className={styles.groupBadge}>{room.group}</span>}
           </div>
           <button
             type="button"
             className={styles.iconButton}
             onClick={() => onRemove(room.key)}
-            title="从工作台移除"
+            disabled={recording.isRecording}
+            title={recording.isRecording ? "请先停止并保存独立录制" : "从工作台移除"}
             aria-label="移除房间"
           >
             <X size={15} />
@@ -570,6 +688,7 @@ export function RoomTile({
                 (player.state === "loading" || player.state === "buffering") && styles.refreshing,
               )}
               onClick={() => setRetryKey((key) => key + 1)}
+              disabled={recording.isRecording}
               title="刷新直播"
               aria-label="刷新直播"
             >
@@ -650,6 +769,7 @@ export function RoomTile({
                 valueLabel={activeLine?.label ?? "线路"}
                 options={info.lines.map((item) => ({ id: item.id, label: item.label }))}
                 onSelect={(lineId) => onLineChange(room.key, lineId)}
+                disabled={recording.isRecording}
               />
             )}
             <ControlsDropdown
@@ -658,6 +778,7 @@ export function RoomTile({
               valueLabel={variant?.label ?? "清晰度"}
               options={qualityOptions}
               onSelect={(qualityId) => onQualityChange(room.key, qualityId)}
+              disabled={recording.isRecording}
             />
             <button
               type="button"
@@ -689,6 +810,128 @@ export function RoomTile({
             title={label}
           />
         ))}
+        {contextMenu &&
+          createPortal(
+            <div
+              ref={contextMenuRef}
+              className={styles.contextMenu}
+              role="menu"
+              aria-label={`${displayName}房间操作`}
+              style={{
+                left: Math.max(8, contextMenu.x),
+                top: Math.max(8, contextMenu.y),
+              }}
+              onContextMenu={(event) => event.preventDefault()}
+            >
+              <div className={styles.contextMenuTitle}>
+                {room.group ? `分组：${room.group}` : "直播间操作"}
+              </div>
+              <button type="button" role="menuitem" onClick={assignGroup}>
+                {room.group ? "修改分组…" : "添加分组…"}
+              </button>
+              {room.group && (
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    onGroupChange(room.key, "");
+                    setContextMenu(null);
+                  }}
+                >
+                  移出分组
+                </button>
+              )}
+              <div className={styles.contextMenuDivider} />
+              {recording.isRecording ? (
+                <button type="button" role="menuitem" onClick={() => void stopAndSaveRecording()}>
+                  <Square size={14} />
+                  停止并保存独立录制
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  role="menuitem"
+                  disabled={!replayEnabled}
+                  onClick={() => {
+                    setContextMenu(null);
+                    if (!recording.startRecording()) {
+                      toast("请先开启回溯功能并等待直播画面开始播放", "info");
+                    }
+                  }}
+                >
+                  独立录制
+                </button>
+              )}
+              <button
+                type="button"
+                role="menuitem"
+                disabled={!replayEnabled || recording.bufferedSeconds === 0}
+                onClick={openReplayPreview}
+              >
+                <Eye size={14} />
+                预览最近回溯
+              </button>
+              <button
+                type="button"
+                role="menuitem"
+                disabled={
+                  !replayEnabled || recording.bufferedSeconds === 0 || exportingReplay !== null
+                }
+                onClick={() => void saveReplay("mp4")}
+              >
+                {exportingReplay === "mp4" ? "正在生成 MP4…" : "保存最近回溯为 MP4"}
+              </button>
+              <button
+                type="button"
+                role="menuitem"
+                disabled={
+                  !replayEnabled || recording.bufferedSeconds === 0 || exportingReplay !== null
+                }
+                onClick={() => void saveReplay("gif")}
+              >
+                {exportingReplay === "gif" ? "正在生成 GIF…" : "保存最近回溯为 GIF"}
+              </button>
+              <div className={styles.contextMenuFooter}>
+                {replayEnabled
+                  ? `回溯缓存 ${recording.bufferedSeconds}/${replaySeconds} 秒`
+                  : "请在设置中开启回溯功能"}
+              </div>
+            </div>,
+            document.body,
+          )}
+        {replayPreviewUrl &&
+          createPortal(
+            <div
+              className={styles.replayOverlay}
+              role="presentation"
+              onMouseDown={(event) => {
+                if (event.target === event.currentTarget) setReplayPreviewUrl("");
+              }}
+            >
+              <div className={styles.replayDialog} role="dialog" aria-modal="true">
+                <header className={styles.replayHeader}>
+                  <span>直播回溯预览 · {recording.bufferedSeconds} 秒</span>
+                  <button
+                    type="button"
+                    className={styles.iconButton}
+                    onClick={() => setReplayPreviewUrl("")}
+                    aria-label="关闭回溯预览"
+                    title="关闭回溯预览"
+                  >
+                    <X size={16} />
+                  </button>
+                </header>
+                <video
+                  className={styles.replayVideo}
+                  src={replayPreviewUrl}
+                  controls
+                  autoPlay
+                  playsInline
+                />
+              </div>
+            </div>,
+            document.body,
+          )}
       </div>
     </article>
   );

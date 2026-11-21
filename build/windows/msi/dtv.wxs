@@ -30,6 +30,7 @@
     <Property Id="ARPCONTACT" Value="DTV" />
     <Property Id="ARPCOMMENTS" Value="DTV live streaming client" />
     <Property Id="ARPURLINFOABOUT" Value="https://github.com/c-zeong/DTV" />
+    <Property Id="WIXUI_INSTALLDIR" Value="INSTALLFOLDER" />
 
     <Directory Id="TARGETDIR" Name="SourceDir">
       <!-- 与 NSIS 版一致：%LOCALAPPDATA%\Programs\DTV -->
@@ -76,6 +77,6 @@
       <ComponentRef Id="MainExecutable" />
     </Feature>
 
-    <UIRef Id="WixUI_Minimal" />
+    <UIRef Id="WixUI_InstallDir" />
   </Product>
 </Wix>

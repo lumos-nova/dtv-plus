@@ -22,7 +22,7 @@ import {
 } from "@/features/multiview/layout";
 import { parseLiveRoomUrl } from "@/features/multiview/roomUrl";
 import { useMonitorWorkspace } from "@/features/multiview/useMonitorWorkspace";
-import { loadAppSettings } from "@/lib/appSettings";
+import { loadAppSettings, normalizeReplaySeconds } from "@/lib/appSettings";
 import { cn } from "@/lib/cn";
 import {
   exitWindowFullscreen,
@@ -64,6 +64,8 @@ export function MonitorPage() {
     () => loadAppSettings().globalAudioEnabled,
   );
   const [globalVolume, setGlobalVolume] = useState(() => loadAppSettings().globalVolume);
+  const [replayEnabled, setReplayEnabled] = useState(() => loadAppSettings().replayEnabled);
+  const [replaySeconds, setReplaySeconds] = useState(() => loadAppSettings().replaySeconds);
   const [windowFullscreenRoomKey, setWindowFullscreenRoomKey] = useState<string | null>(null);
   const errorTimerRef = useRef<number | null>(null);
   const gridRef = useRef<HTMLDivElement>(null);
@@ -103,6 +105,14 @@ export function MonitorPage() {
   }, [notice]);
 
   useEffect(() => {
+    const onReplayEnabled = (event: Event) => {
+      const detail = (event as CustomEvent<{ enabled?: boolean }>).detail;
+      if (typeof detail?.enabled === "boolean") setReplayEnabled(detail.enabled);
+    };
+    const onReplaySeconds = (event: Event) => {
+      const detail = (event as CustomEvent<{ seconds?: number }>).detail;
+      if (typeof detail?.seconds === "number") setReplaySeconds(normalizeReplaySeconds(detail.seconds));
+    };
     const onVolume = (event: Event) => {
       const detail = (event as CustomEvent<{ volume?: number }>).detail;
       if (!detail || typeof detail.volume !== "number") return;
@@ -136,11 +146,15 @@ export function MonitorPage() {
       }));
     };
     window.addEventListener("dtv:global-volume", onVolume);
+    window.addEventListener("dtv:replay-enabled", onReplayEnabled);
+    window.addEventListener("dtv:replay-seconds", onReplaySeconds);
     window.addEventListener("dtv:global-audio", onGlobalAudio);
     window.addEventListener("dtv:global-danmaku", onDanmaku);
     window.addEventListener("dtv:global-danmaku-settings", onDanmakuSettings);
     return () => {
       window.removeEventListener("dtv:global-volume", onVolume);
+      window.removeEventListener("dtv:replay-enabled", onReplayEnabled);
+      window.removeEventListener("dtv:replay-seconds", onReplaySeconds);
       window.removeEventListener("dtv:global-audio", onGlobalAudio);
       window.removeEventListener("dtv:global-danmaku", onDanmaku);
       window.removeEventListener("dtv:global-danmaku-settings", onDanmakuSettings);
@@ -627,6 +641,8 @@ export function MonitorPage() {
                 key={room.key}
                 room={room}
                 placement={placement}
+                replayEnabled={replayEnabled}
+                replaySeconds={replaySeconds}
                 focused={audioFocusKeys.includes(room.key)}
                 soundEnabled={globalAudioEnabled}
                 globalVolume={globalVolume}
@@ -660,6 +676,14 @@ export function MonitorPage() {
                 onLineChange={(key, lineId) => updateRoom(key, { lineId })}
                 onQualityChange={(key, qualityId) => updateRoom(key, { qualityId })}
                 onRemove={removeRoom}
+                onGroupChange={(key, group) =>
+                  setWorkspace((previous) => ({
+                    ...previous,
+                    rooms: previous.rooms.map((item) =>
+                      item.key === key ? { ...item, group: group || undefined } : item,
+                    ),
+                  }))
+                }
                 onMove={moveRoom}
                 onDraggingChange={(_key, dragging) => {
                   setDraggingRoom(dragging);

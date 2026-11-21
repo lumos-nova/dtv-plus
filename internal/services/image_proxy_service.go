@@ -53,6 +53,7 @@ type ImageProxyInfo struct {
 // Content-Type 是 image/*，并要求每次启动生成的随机 token，因此不是通用 HTTP 代理。
 type ImageProxyService struct {
 	mu       sync.Mutex
+	cacheMu  sync.RWMutex
 	server   *http.Server
 	baseURL  string
 	token    string
@@ -113,8 +114,11 @@ func (s *ImageProxyService) EnsureStarted() (*ImageProxyInfo, error) {
 		return nil, fmt.Errorf("启动图片代理失败：%w", err)
 	}
 
-	if s.cacheDir == "" {
-		s.cacheDir = appdirs.Ensure(appdirs.ImageCacheDir())
+	if s.currentCacheDir() == "" {
+		if cacheErr := s.SetCacheDir(appdirs.ImageCacheDir()); cacheErr != nil {
+			_ = listener.Close()
+			return nil, cacheErr
+		}
 	}
 	if s.token == "" {
 		s.token = randomToken()
@@ -270,7 +274,8 @@ func (s *ImageProxyService) fetchAndStream(
 	w.WriteHeader(http.StatusOK)
 
 	// 流式转发：一边写响应一边落盘缓存，不再把整张图读进内存（P-06）。
-	tmpPath, tmpFile := s.createCacheTemp(target, width)
+	cacheDir := s.currentCacheDir()
+	tmpPath, tmpFile := s.createCacheTemp(cacheDir)
 	writer := io.Writer(w)
 	if tmpFile != nil {
 		writer = io.MultiWriter(w, tmpFile)
@@ -281,7 +286,7 @@ func (s *ImageProxyService) fetchAndStream(
 		if copyErr != nil {
 			_ = os.Remove(tmpPath)
 		} else {
-			s.commitCacheFile(tmpPath, target, width, contentType)
+			s.commitCacheFile(cacheDir, tmpPath, target, width, contentType)
 		}
 	}
 }
@@ -337,11 +342,11 @@ func (s *ImageProxyService) Prefetch(urls []string, width int) error {
 		width = 1600
 	}
 
-	s.mu.Lock()
-	if s.cacheDir == "" {
-		s.cacheDir = appdirs.Ensure(appdirs.ImageCacheDir())
+	if s.currentCacheDir() == "" {
+		if err := s.SetCacheDir(appdirs.ImageCacheDir()); err != nil {
+			return err
+		}
 	}
-	s.mu.Unlock()
 
 	// 去重并限制数量：前 24 张足够覆盖首屏和一行预取。
 	seen := make(map[string]struct{}, len(urls))
@@ -407,6 +412,10 @@ func (s *ImageProxyService) hasCache(target *url.URL, width int) bool {
 }
 
 func (s *ImageProxyService) fetchToCache(ctx context.Context, target *url.URL, width int) {
+	cacheDir := s.currentCacheDir()
+	if cacheDir == "" {
+		return
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target.String(), nil)
 	if err != nil {
 		return
@@ -427,7 +436,7 @@ func (s *ImageProxyService) fetchToCache(ctx context.Context, target *url.URL, w
 		return
 	}
 
-	tmpPath, tmpFile := s.createCacheTemp(target, width)
+	tmpPath, tmpFile := s.createCacheTemp(cacheDir)
 	if tmpFile == nil {
 		return
 	}
@@ -437,24 +446,22 @@ func (s *ImageProxyService) fetchToCache(ctx context.Context, target *url.URL, w
 		_ = os.Remove(tmpPath)
 		return
 	}
-	s.commitCacheFile(tmpPath, target, width, contentType)
+	s.commitCacheFile(cacheDir, tmpPath, target, width, contentType)
 }
 
-func (s *ImageProxyService) createCacheTemp(target *url.URL, width int) (string, *os.File) {
-	if s.cacheDir == "" {
+func (s *ImageProxyService) createCacheTemp(cacheDir string) (string, *os.File) {
+	if cacheDir == "" {
 		return "", nil
 	}
-	path, _ := s.cachePaths(target, width)
-	tmp, err := os.CreateTemp(s.cacheDir, "img-*.tmp")
+	tmp, err := os.CreateTemp(cacheDir, "img-*.tmp")
 	if err != nil {
 		return "", nil
 	}
-	_ = path
 	return tmp.Name(), tmp
 }
 
-func (s *ImageProxyService) commitCacheFile(tmpPath string, target *url.URL, width int, contentType string) {
-	path, typePath := s.cachePaths(target, width)
+func (s *ImageProxyService) commitCacheFile(cacheDir, tmpPath string, target *url.URL, width int, contentType string) {
+	path, typePath := cachePathsAt(cacheDir, target, width)
 	if err := os.Rename(tmpPath, path); err != nil {
 		_ = os.Remove(tmpPath)
 		return
@@ -463,22 +470,64 @@ func (s *ImageProxyService) commitCacheFile(tmpPath string, target *url.URL, wid
 }
 
 func (s *ImageProxyService) cachePaths(target *url.URL, width int) (string, string) {
+	return cachePathsAt(s.currentCacheDir(), target, width)
+}
+
+func cachePathsAt(cacheDir string, target *url.URL, width int) (string, string) {
 	key := target.String()
 	if width > 0 {
 		key = fmt.Sprintf("%s#w=%d", key, width)
 	}
 	sum := sha256.Sum256([]byte(key))
 	base := hex.EncodeToString(sum[:16])
-	path := filepath.Join(s.cacheDir, base+".img")
+	path := filepath.Join(cacheDir, base+".img")
 	return path, path + ".type"
+}
+
+func (s *ImageProxyService) currentCacheDir() string {
+	s.cacheMu.RLock()
+	defer s.cacheMu.RUnlock()
+	return s.cacheDir
+}
+
+func (s *ImageProxyService) setCacheDir(path string) {
+	s.cacheMu.Lock()
+	s.cacheDir = path
+	s.cacheMu.Unlock()
+}
+
+// SetCacheDir switches the image cache to a validated local directory.
+func (s *ImageProxyService) SetCacheDir(path string) error {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return errors.New("图片缓存目录不能为空")
+	}
+	absolute, err := filepath.Abs(path)
+	if err != nil {
+		return fmt.Errorf("解析图片缓存目录失败：%w", err)
+	}
+	if err := os.MkdirAll(absolute, 0o755); err != nil {
+		return fmt.Errorf("创建图片缓存目录失败：%w", err)
+	}
+	info, err := os.Stat(absolute)
+	if err != nil {
+		return fmt.Errorf("检查图片缓存目录失败：%w", err)
+	}
+	if !info.IsDir() {
+		return errors.New("图片缓存路径不是目录")
+	}
+	s.setCacheDir(filepath.Clean(absolute))
+	go s.pruneCache()
+	return nil
 }
 
 // pruneCache 做一次轻量 LRU 清理：先删过期文件，再按访问时间删除到预算以内。
 func (s *ImageProxyService) pruneCache() {
-	if s.cacheDir == "" {
+	cacheDir := s.currentCacheDir()
+	if cacheDir == "" {
 		return
 	}
-	entries, err := os.ReadDir(s.cacheDir)
+	entries, err := os.ReadDir(cacheDir)
 	if err != nil {
 		return
 	}
@@ -494,7 +543,7 @@ func (s *ImageProxyService) pruneCache() {
 		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".img") {
 			continue
 		}
-		path := filepath.Join(s.cacheDir, entry.Name())
+		path := filepath.Join(cacheDir, entry.Name())
 		info, statErr := entry.Info()
 		if statErr != nil {
 			continue

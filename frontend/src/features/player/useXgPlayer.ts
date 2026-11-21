@@ -26,6 +26,7 @@ export type PlayState = "idle" | "loading" | "buffering" | "playing" | "paused" 
 export interface UseXgPlayerResult {
   state: PlayState;
   error: string | null;
+  mediaElement: HTMLVideoElement | null;
   /** 每次真实的 error 事件 +1（用于"只自动换一条线"之类的逻辑） */
   errorNonce: number;
   volume: number;
@@ -107,6 +108,7 @@ export function useXgPlayer(
 ): UseXgPlayerResult {
   const playerRef = useRef<Player | null>(null);
   const [state, setState] = useState<PlayState>("idle");
+  const [mediaElement, setMediaElement] = useState<HTMLVideoElement | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [errorNonce, setErrorNonce] = useState(0);
   const [volume, setVolumeState] = useState(readVolume);
@@ -273,6 +275,7 @@ export function useXgPlayer(
       });
 
       const media = player.media as HTMLVideoElement | null;
+      setMediaElement(media);
       const currentAudio = audioRef.current;
       if (media && currentAudio) {
         media.muted = currentAudio.muted;
@@ -365,6 +368,7 @@ export function useXgPlayer(
         /* 忽略销毁异常 */
       }
       playerRef.current = null;
+      setMediaElement(null);
       if (media) {
         try {
           media.pause();
@@ -458,6 +462,7 @@ export function useXgPlayer(
   return {
     state,
     error,
+    mediaElement,
     errorNonce,
     volume,
     togglePlay,

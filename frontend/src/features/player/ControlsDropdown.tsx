@@ -19,6 +19,7 @@ export function ControlsDropdown({
   className,
   controlClassName,
   dropdownClassName,
+  disabled = false,
 }: {
   label: string;
   valueId: string;
@@ -30,6 +31,7 @@ export function ControlsDropdown({
   className?: string;
   controlClassName?: string;
   dropdownClassName?: string;
+  disabled?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const wrapRef = useRef<HTMLDivElement>(null);
@@ -95,6 +97,7 @@ export function ControlsDropdown({
       <button
         type="button"
         className={cn(styles.controlItem, controlClassName, open && styles.menuOpen)}
+        disabled={disabled}
         onClick={() => setOpen((value) => !value)}
         aria-label={`${label}：${valueLabel}`}
         aria-haspopup="menu"

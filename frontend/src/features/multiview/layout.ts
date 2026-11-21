@@ -24,6 +24,7 @@ export interface MonitorRoom {
   key: string;
   platform: LivePlatform;
   roomId: string;
+  group?: string;
   position?: GridPosition;
   size: MonitorTileSize;
   lineId: string;
@@ -254,6 +255,9 @@ export function normalizeMonitorWorkspace(raw: unknown): {
       key,
       platform: platform as LivePlatform,
       roomId,
+      ...(typeof room.group === "string" && room.group.trim()
+        ? { group: room.group.trim().slice(0, 40) }
+        : {}),
       ...(isGridPosition(room.position) ? { position: room.position } : {}),
       size: isRoomSize(room.size) ? room.size : { columns: 1, rows: 1 },
       lineId: typeof room.lineId === "string" ? room.lineId.slice(0, 128) : "",

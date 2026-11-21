@@ -51,6 +51,37 @@
   background: var(--fill-secondary);
 }
 
+.storageFields {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.storageField {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.pathRow {
+  display: flex;
+  gap: 7px;
+}
+
+.pathRow input {
+  flex: 1;
+  min-width: 0;
+  height: 34px;
+  padding: 0 9px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--bg-primary);
+  color: var(--text-tertiary);
+  font-size: 11px;
+}
+
 .field {
   display: flex;
   align-items: center;

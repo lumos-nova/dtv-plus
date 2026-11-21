@@ -2,11 +2,13 @@
 package services
 
 import (
+	"encoding/base64"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 
+	"dtv/internal/appdirs"
 	"github.com/wailsapp/wails/v3/pkg/application"
 )
 
@@ -111,4 +113,63 @@ func (s *DataTransferService) SaveExportJSONFile(content string, suggestedName s
 		Name: filepath.Base(path),
 		Path: path,
 	}, nil
+}
+
+// SaveRecordingFile prompts for a destination and writes a WebM, MP4, or GIF recording.
+func (s *DataTransferService) SaveRecordingFile(encodedContent string, suggestedName string) (*DataTransferFile, error) {
+	const maxRecordingBytes = 256 << 20
+	if len(encodedContent) > base64.StdEncoding.EncodedLen(maxRecordingBytes) {
+		return nil, fmt.Errorf("录制文件超过 256 MiB 限制")
+	}
+	content, err := base64.StdEncoding.DecodeString(encodedContent)
+	if err != nil {
+		return nil, fmt.Errorf("解码录制文件失败：%w", err)
+	}
+	if len(content) == 0 || len(content) > maxRecordingBytes {
+		return nil, fmt.Errorf("录制文件为空或超过 256 MiB 限制")
+	}
+
+	app := application.Get()
+	if app == nil || app.Dialog == nil {
+		return nil, fmt.Errorf("当前环境不支持系统文件对话框")
+	}
+	name := filepath.Base(strings.TrimSpace(suggestedName))
+	if name == "." || name == "" {
+		name = "dtv-recording.webm"
+	}
+	extension := strings.ToLower(filepath.Ext(name))
+	if extension != ".webm" && extension != ".mp4" && extension != ".gif" {
+		return nil, fmt.Errorf("不支持的录制文件类型")
+	}
+	if err := os.MkdirAll(appdirs.RecordingsDir(), 0o755); err != nil {
+		return nil, fmt.Errorf("创建录制目录失败：%w", err)
+	}
+	dialog := app.Dialog.SaveFile()
+	dialog.SetOptions(&application.SaveFileDialogOptions{Title: "保存直播回溯"})
+	path, err := dialog.
+		SetMessage("选择直播录制文件的保存位置").
+		SetDirectory(appdirs.RecordingsDir()).
+		SetFilename(name).
+		AddFilter("MP4 视频", "*.mp4").
+		AddFilter("WebM 视频", "*.webm").
+		AddFilter("GIF 动图", "*.gif").
+		CanCreateDirectories(true).
+		AllowsOtherFileTypes(true).
+		PromptForSingleSelection()
+	if err != nil {
+		return nil, fmt.Errorf("打开录制保存对话框失败：%w", err)
+	}
+	if strings.TrimSpace(path) == "" {
+		return nil, nil
+	}
+	selectedExtension := strings.ToLower(filepath.Ext(path))
+	if selectedExtension == "" {
+		path += extension
+	} else if selectedExtension != extension {
+		return nil, fmt.Errorf("所选扩展名与录制文件内容不一致")
+	}
+	if err := os.WriteFile(path, content, 0o600); err != nil {
+		return nil, fmt.Errorf("写入录制文件失败：%w", err)
+	}
+	return &DataTransferFile{Name: filepath.Base(path), Path: path}, nil
 }

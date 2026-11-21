@@ -195,10 +195,12 @@ func main() {
 	// 本地能力：图片代理 + 局域网数据同步。
 	// 图片代理由前端在首屏渲染后调用 EnsureStarted 启动；
 	// 局域网共享则由用户在顶栏的“数据同步”弹窗里手动开启。
-	app.RegisterService(application.NewService(services.NewImageProxyService()))
+	imageProxyService := services.NewImageProxyService()
+	app.RegisterService(application.NewService(imageProxyService))
 	app.RegisterService(application.NewService(services.NewLanSyncService()))
 	// 配置文件导入 / 导出：只负责系统文件对话框与磁盘读写。
 	app.RegisterService(application.NewService(services.NewDataTransferService()))
+	app.RegisterService(application.NewService(services.NewStorageSettingsService(imageProxyService)))
 
 	mainWindow = app.Window.NewWithOptions(application.WebviewWindowOptions{
 		Title: "DTV",

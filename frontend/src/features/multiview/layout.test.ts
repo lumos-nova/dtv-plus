@@ -173,6 +173,7 @@ describe("monitor layout", () => {
       rooms: [
         {
           ...room(1),
+          group: "  Main  ",
           qualityId: "invalid",
           lineId: "tx",
           danmakuSettings: { opacity: 4 },
@@ -181,6 +182,7 @@ describe("monitor layout", () => {
     });
 
     expect(restored.rooms[0]?.qualityId).toBe("invalid");
+    expect(restored.rooms[0]?.group).toBe("Main");
     expect(restored.rooms[0]?.lineId).toBe("tx");
     expect(restored.rooms[0]?.danmakuSettings.opacity).toBe(1);
     expect(restored.rooms[0]?.danmakuSettings.fontSize).toBe("20px");
