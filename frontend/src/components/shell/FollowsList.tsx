@@ -769,6 +769,7 @@ export function FollowsList({
                   type="button"
                   className={cn(
                     styles.filterBtn,
+                    styles.platformFilter,
                     platformFilter === platform && styles.filterActive,
                   )}
                   onClick={() => setPlatformFilter(platform)}

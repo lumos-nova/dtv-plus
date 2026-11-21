@@ -1,5 +1,6 @@
-import { Check, Github, Palette, Settings } from "lucide-react";
+import { Check, Github, Palette, Settings, VideoOff } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
+import { useLocation } from "react-router-dom";
 import { PlatformTabs } from "@/components/shell/PlatformTabs";
 import { SearchBox } from "@/components/shell/SearchBox";
 import { WindowControls } from "@/components/shell/WindowControls";
@@ -25,6 +26,7 @@ type ModalKind = "settings" | null;
  * 每行两个，当前默认是「青柠·夜」。
  */
 export function Navbar() {
+  const location = useLocation();
   const { theme, setTheme } = useTheme();
   const desktopOS = useDesktopOS();
   const isMac = desktopOS === "darwin" || isMacOS();
@@ -69,6 +71,17 @@ export function Navbar() {
 
           <div className={styles.toolGroup}>
             <WatchAudioControl />
+            {location.pathname === "/monitor" && (
+              <button
+                type="button"
+                className={cn(styles.iconBtn, styles.noDrag)}
+                onClick={() => window.dispatchEvent(new Event("dtv:monitor-close-all"))}
+                aria-label="关闭所有直播间"
+                title="关闭所有直播间"
+              >
+                <VideoOff size={18} strokeWidth={2} />
+              </button>
+            )}
             <DanmakuQuickControl />
             <button
               type="button"

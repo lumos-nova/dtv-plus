@@ -4,7 +4,6 @@ import {
   Minimize2,
   MessageSquare,
   MessageSquareOff,
-  Move,
   PanelRightClose,
   PanelRightOpen,
   Pause,
@@ -25,17 +24,13 @@ import { ControlsDropdown } from "@/features/player/ControlsDropdown";
 import { VolumeSlider } from "@/features/player/VolumeSlider";
 import { useXgPlayer } from "@/features/player/useXgPlayer";
 import { cn } from "@/lib/cn";
-import { toggleWindowFullscreen } from "@/lib/window";
 import { useToast } from "@/state/ToastProvider";
-import {
-  type GridPlacement,
-  type MonitorRoom,
-  type MonitorTileSize,
-} from "./layout";
+import { type GridPlacement, type MonitorRoom, type MonitorTileSize } from "./layout";
 import styles from "./RoomTile.module.css";
 
 const MAX_MESSAGES = 120;
 const MESSAGE_FLUSH_MS = 150;
+let lastRoomDragEndedAt = 0;
 
 interface RoomTileProps {
   room: MonitorRoom;
@@ -43,7 +38,9 @@ interface RoomTileProps {
   focused: boolean;
   soundEnabled: boolean;
   globalVolume: number;
+  windowFullscreen: boolean;
   onAudioFocus: (key: string, multiple: boolean) => void;
+  onToggleWindowFullscreen: (key: string) => void;
   onDanmakuToggle: (key: string) => void;
   onDanmakuSettingsChange: (key: string, patch: Partial<DanmuUserSettings>) => void;
   blockKeywords: string[];
@@ -54,7 +51,7 @@ interface RoomTileProps {
   onVolumeChange: (key: string, volume: number) => void;
   onQualityChange: (key: string, qualityId: string) => void;
   onRemove: (key: string) => void;
-  onMove: (fromKey: string, toKey: string) => void;
+  onMove: (fromKey: string, clientX: number, clientY: number) => void;
   onResize: (key: string, size: MonitorTileSize) => void;
 }
 
@@ -64,7 +61,9 @@ export function RoomTile({
   focused,
   soundEnabled,
   globalVolume,
+  windowFullscreen,
   onAudioFocus,
+  onToggleWindowFullscreen,
   onDanmakuToggle,
   onDanmakuSettingsChange,
   blockKeywords,
@@ -109,6 +108,7 @@ export function RoomTile({
   const [messages, setMessages] = useState<DanmakuMessage[]>([]);
   const [longPressDragging, setLongPressDragging] = useState(false);
   const [dropTarget, setDropTarget] = useState(false);
+  const [moveOffset, setMoveOffset] = useState({ x: 0, y: 0 });
   const [danmakuPanelOpen, setDanmakuPanelOpen] = useState(false);
   const [tileFullscreen, setTileFullscreen] = useState(false);
   const { toast } = useToast();
@@ -129,6 +129,10 @@ export function RoomTile({
         }
         return;
       }
+      setMoveOffset({
+        x: event.clientX - gesture.startX,
+        y: event.clientY - gesture.startY,
+      });
       const targetKey = tileAtPoint(event)?.dataset.monitorRoomKey;
       setDropTarget(Boolean(targetKey && targetKey !== room.key));
     };
@@ -140,9 +144,11 @@ export function RoomTile({
       moveGestureRef.current = null;
       setLongPressDragging(false);
       setDropTarget(false);
+      setMoveOffset({ x: 0, y: 0 });
       if (!gesture.active || event.type === "pointercancel") return;
-      const targetKey = tileAtPoint(event)?.dataset.monitorRoomKey;
-      if (targetKey && targetKey !== room.key) onMoveRef.current(room.key, targetKey);
+      event.preventDefault();
+      lastRoomDragEndedAt = Date.now();
+      onMoveRef.current(room.key, event.clientX, event.clientY);
     };
 
     window.addEventListener("pointermove", onPointerMove);
@@ -160,10 +166,15 @@ export function RoomTile({
     };
   }, [room.key]);
 
-  const beginMove = (event: PointerEvent<HTMLButtonElement>) => {
+  const beginMove = (event: PointerEvent<HTMLElement>) => {
     if (event.button !== 0 || event.isPrimary === false) return;
-    event.preventDefault();
-    event.currentTarget.setPointerCapture(event.pointerId);
+    const target = event.target;
+    if (
+      target instanceof Element &&
+      target.closest("button, input, select, textarea, label, [role='slider'], [draggable='true']")
+    ) {
+      return;
+    }
     if (moveGestureRef.current) window.clearTimeout(moveGestureRef.current.timer);
     const gesture = {
       pointerId: event.pointerId,
@@ -175,6 +186,7 @@ export function RoomTile({
     gesture.timer = window.setTimeout(() => {
       if (moveGestureRef.current !== gesture) return;
       gesture.active = true;
+      setMoveOffset({ x: 0, y: 0 });
       setLongPressDragging(true);
     }, 350);
     moveGestureRef.current = gesture;
@@ -352,6 +364,7 @@ export function RoomTile({
   return (
     <article
       ref={tileRef}
+      onPointerDown={beginMove}
       className={cn(
         styles.tile,
         focused && styles.audioFocused,
@@ -363,6 +376,11 @@ export function RoomTile({
       onClickCapture={(event) => {
         const target = event.target;
         if (event.button !== 0) return;
+        if (Date.now() - lastRoomDragEndedAt < 250) {
+          event.preventDefault();
+          event.stopPropagation();
+          return;
+        }
         if (
           target instanceof Element &&
           target.closest("button, input, select, label, [role='slider'], [draggable='true']")
@@ -371,8 +389,12 @@ export function RoomTile({
         onAudioFocus(room.key, event.shiftKey);
       }}
       style={{
-        gridColumn: `${placement.column} / span ${placement.columns}`,
-        gridRow: `${placement.row} / span ${placement.rows}`,
+        gridColumn: windowFullscreen ? "1 / -1" : `${placement.column} / span ${placement.columns}`,
+        gridRow: windowFullscreen ? "1 / -1" : `${placement.row} / span ${placement.rows}`,
+        transform: longPressDragging
+          ? `translate3d(${moveOffset.x}px, ${moveOffset.y}px, 0)`
+          : undefined,
+        zIndex: windowFullscreen ? 25 : undefined,
       }}
       aria-label={`${PLATFORM_LABEL[room.platform]}房间 ${room.roomId}`}
     >
@@ -420,15 +442,6 @@ export function RoomTile({
         )}
 
         <header className={styles.header}>
-          <div
-            role="presentation"
-            className={styles.dragHandle}
-            title="按住拖动到另一房间以交换位置和尺寸"
-          >
-            <button type="button" aria-label="长按拖动房间" onPointerDown={beginMove}>
-              <Move size={13} />
-            </button>
-          </div>
           <img className={styles.logo} src={PLATFORM_LOGO[room.platform]} alt="" />
           <div className={styles.roomMeta}>
             <span className={styles.nickname}>{displayName}</span>
@@ -475,6 +488,19 @@ export function RoomTile({
             >
               <RotateCw size={19} strokeWidth={2} />
             </button>
+            <button
+              type="button"
+              className={cn(styles.iconButton, focused && styles.activeButton)}
+              onClick={() => {
+                if (room.volume > 1) player.activateAudioBoost();
+                onAudioFocus(room.key, true);
+              }}
+              aria-pressed={focused}
+              title={focused ? "关闭本房间声音" : "开启本房间声音"}
+              aria-label={focused ? "关闭本房间声音" : "开启本房间声音"}
+            >
+              {focused ? <Volume2 size={18} /> : <VolumeX size={18} />}
+            </button>
           </div>
           <div className={styles.volumeControl}>
             <VolumeSlider
@@ -496,19 +522,6 @@ export function RoomTile({
             </span>
           )}
           <div className={styles.roomControls}>
-            <button
-              type="button"
-              className={cn(styles.iconButton, focused && styles.activeButton)}
-              onClick={() => {
-                if (room.volume > 1) player.activateAudioBoost();
-                onAudioFocus(room.key, true);
-              }}
-              aria-pressed={focused}
-              title={focused ? "关闭本房间声音" : "开启本房间声音"}
-              aria-label={focused ? "关闭本房间声音" : "开启本房间声音"}
-            >
-              {focused ? <Volume2 size={18} /> : <VolumeX size={18} />}
-            </button>
             <button
               type="button"
               className={cn(styles.iconButton, room.danmakuEnabled && styles.activeButton)}
@@ -550,9 +563,9 @@ export function RoomTile({
             <button
               type="button"
               className={styles.iconButton}
-              onClick={() => void toggleWindowFullscreen()}
-              title="切换应用窗口全屏"
-              aria-label="切换应用窗口全屏"
+              onClick={() => onToggleWindowFullscreen(room.key)}
+              title={windowFullscreen ? "退出应用窗口全屏" : "切换应用窗口全屏"}
+              aria-label={windowFullscreen ? "退出应用窗口全屏" : "切换应用窗口全屏"}
             >
               <Monitor size={18} />
             </button>

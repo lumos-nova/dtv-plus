@@ -41,6 +41,41 @@ describe("monitor layout", () => {
     expect(packRoomGrid(rooms, { columns: 2, rows: 2 })).toBeNull();
   });
 
+  it("preserves explicit positions and packs unpositioned rooms into the remaining cells", () => {
+    const rooms = [room(1), { ...room(2), position: { column: 3, row: 2 } }, room(3)];
+    const packed = packRoomGrid(rooms, { columns: 3, rows: 2 });
+
+    expect(packed?.get("douyu:2")).toMatchObject({ column: 3, row: 2 });
+    expect(packed?.get("douyu:1")).toMatchObject({ column: 1, row: 1 });
+    expect(packed?.get("douyu:3")).toMatchObject({ column: 2, row: 1 });
+  });
+
+  it("keeps explicitly positioned rooms within the selected grid after restore", () => {
+    const restored = normalizeMonitorWorkspace({
+      grid: { columns: 4, rows: 4 },
+      rooms: [{ ...room(1), position: { column: 3, row: 2 } }],
+    });
+
+    expect(restored.grid).toEqual({ columns: 3, rows: 2 });
+    expect(packRoomGrid(restored.rooms, restored.grid)?.get("douyu:1")).toMatchObject({
+      column: 3,
+      row: 2,
+    });
+  });
+
+  it("prioritizes explicit positions and packs out-of-grid positions into available cells", () => {
+    const rooms = [
+      room(1),
+      { ...room(2), position: { column: 1, row: 1 } },
+      { ...room(3), position: { column: 4, row: 4 } },
+    ];
+    const packed = packRoomGrid(rooms, { columns: 2, rows: 2 });
+
+    expect(packed?.get("douyu:2")).toMatchObject({ column: 1, row: 1 });
+    expect(packed?.get("douyu:3")).toMatchObject({ column: 2, row: 1 });
+    expect(packed?.get("douyu:1")).toMatchObject({ column: 1, row: 2 });
+  });
+
   it("chooses the smallest nearby grid that fits all rooms", () => {
     expect(
       fitRoomGrid(
@@ -70,7 +105,11 @@ describe("monitor layout", () => {
   });
 
   it("swaps room positions and sizes while keeping each tile's occupied position", () => {
-    const rooms = [room(1), room(2, 2), room(3)];
+    const rooms = [
+      { ...room(1), position: { column: 1, row: 1 } },
+      { ...room(2, 2), position: { column: 2, row: 1 } },
+      { ...room(3), position: { column: 4, row: 1 } },
+    ];
     const grid = { columns: 4, rows: 2 } as const;
     const before = packRoomGrid(rooms, grid);
     const swapped = swapRoomPositionsAndSizes(rooms, "douyu:1", "douyu:2");

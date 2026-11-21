@@ -13,7 +13,6 @@ import {
   FOLLOW_ROOM_DRAG_TYPE,
   fitRoomGrid,
   packRoomGrid,
-  swapRoomPositionsAndSizes,
   type MonitorRoom,
   type MonitorTileSize,
 } from "@/features/multiview/layout";
@@ -21,6 +20,13 @@ import { parseLiveRoomUrl } from "@/features/multiview/roomUrl";
 import { useMonitorWorkspace } from "@/features/multiview/useMonitorWorkspace";
 import { loadAppSettings } from "@/lib/appSettings";
 import { cn } from "@/lib/cn";
+import {
+  exitWindowFullscreen,
+  isWailsRuntime,
+  isWindowFullscreen,
+  onWindowFullscreenChange,
+  toggleWindowFullscreen,
+} from "@/lib/window";
 import styles from "./MonitorPage.module.css";
 
 const MAX_ROOMS = 16;
@@ -48,7 +54,10 @@ export function MonitorPage() {
     () => loadAppSettings().globalAudioEnabled,
   );
   const [globalVolume, setGlobalVolume] = useState(() => loadAppSettings().globalVolume);
+  const [windowFullscreenRoomKey, setWindowFullscreenRoomKey] = useState<string | null>(null);
   const errorTimerRef = useRef<number | null>(null);
+  const gridRef = useRef<HTMLDivElement>(null);
+  const previousAudioFocusRef = useRef<string[] | null>(null);
   const placements = useMemo(() => packRoomGrid(rooms, grid), [grid, rooms]);
 
   const showError = (message: string) => {
@@ -125,6 +134,46 @@ export function MonitorPage() {
       window.removeEventListener("dtv:global-danmaku-settings", onDanmakuSettings);
     };
   }, [setWorkspace]);
+
+  useEffect(() => {
+    const closeAllRooms = () => {
+      setWorkspace((previous) => ({
+        ...previous,
+        rooms: [],
+        audioFocusKeys: [],
+      }));
+      setNotice("已关闭所有直播间");
+      if (previousAudioFocusRef.current) void exitWindowFullscreen();
+      previousAudioFocusRef.current = null;
+      setWindowFullscreenRoomKey(null);
+      if (errorTimerRef.current !== null) {
+        window.clearTimeout(errorTimerRef.current);
+        errorTimerRef.current = null;
+      }
+      setError("");
+    };
+    window.addEventListener("dtv:monitor-close-all", closeAllRooms);
+    return () => window.removeEventListener("dtv:monitor-close-all", closeAllRooms);
+  }, [setWorkspace]);
+
+  useEffect(
+    () =>
+      onWindowFullscreenChange(() => {
+        void isWindowFullscreen().then((fullscreen) => {
+          if (fullscreen || previousAudioFocusRef.current === null) return;
+          const previousAudioFocus = previousAudioFocusRef.current;
+          previousAudioFocusRef.current = null;
+          setWindowFullscreenRoomKey(null);
+          setWorkspace((previous) => ({
+            ...previous,
+            audioFocusKeys: previousAudioFocus.filter((key) =>
+              previous.rooms.some((room) => room.key === key),
+            ),
+          }));
+        });
+      }),
+    [setWorkspace],
+  );
 
   const addRoom = (platform: LivePlatform, rawRoomId: string) => {
     const roomId = rawRoomId.replace(/^0+(?=\d)/, "");
@@ -213,13 +262,153 @@ export function MonitorPage() {
     }
   };
 
-  const moveRoom = (fromKey: string, toKey: string) => {
-    setWorkspace((previous) => {
-      return {
-        ...previous,
-        rooms: swapRoomPositionsAndSizes(previous.rooms, fromKey, toKey),
-      };
+  const moveRoom = (fromKey: string, clientX: number, clientY: number) => {
+    const gridElement = gridRef.current;
+    if (!gridElement) return;
+    const rect = gridElement.getBoundingClientRect();
+    const style = window.getComputedStyle(gridElement);
+    const borderLeft = Number.parseFloat(style.borderLeftWidth) || 0;
+    const borderTop = Number.parseFloat(style.borderTopWidth) || 0;
+    const paddingLeft = Number.parseFloat(style.paddingLeft) || 0;
+    const paddingTop = Number.parseFloat(style.paddingTop) || 0;
+    const gapX = Number.parseFloat(style.columnGap) || 0;
+    const gapY = Number.parseFloat(style.rowGap) || 0;
+    const left = rect.left + borderLeft + paddingLeft;
+    const top = rect.top + borderTop + paddingTop;
+    const trackSizes = (rawTracks: string, count: number, extent: number, gap: number) => {
+      const tracks = rawTracks.split(/\s+/).map((value) => Number.parseFloat(value));
+      if (tracks.length === count && tracks.every(Number.isFinite)) return tracks;
+      const fallbackSize = Math.max(0, (extent - gap * (count - 1)) / count);
+      return Array.from({ length: count }, () => fallbackSize);
+    };
+    const columns = trackSizes(
+      style.gridTemplateColumns,
+      grid.columns,
+      gridElement.scrollWidth - borderLeft * 2 - paddingLeft * 2,
+      gapX,
+    );
+    const rows = trackSizes(
+      style.gridTemplateRows,
+      grid.rows,
+      gridElement.scrollHeight - borderTop * 2 - paddingTop * 2,
+      gapY,
+    );
+    const trackAt = (
+      coordinate: number,
+      start: number,
+      tracks: number[],
+      gap: number,
+      scrollOffset: number,
+    ) => {
+      let offset = coordinate - start + scrollOffset;
+      for (let index = 0; index < tracks.length; index += 1) {
+        const size = tracks[index] ?? 0;
+        if (offset <= size) return index + 1;
+        offset -= size;
+        if (index < tracks.length - 1) {
+          if (offset < gap) return index + 2;
+          offset -= gap;
+        }
+      }
+      return -1;
+    };
+    const column = trackAt(clientX, left, columns, gapX, gridElement.scrollLeft);
+    const row = trackAt(clientY, top, rows, gapY, gridElement.scrollTop);
+    if (
+      clientX < left ||
+      clientY < top ||
+      column < 1 ||
+      column > grid.columns ||
+      row < 1 ||
+      row > grid.rows
+    ) {
+      return;
+    }
+
+    const from = rooms.find((room) => room.key === fromKey);
+    const currentPlacements = packRoomGrid(rooms, grid);
+    const fromPlacement = currentPlacements?.get(fromKey);
+    if (!from || !currentPlacements || !fromPlacement) return;
+    const target = rooms.find((room) => {
+      const placement = currentPlacements?.get(room.key);
+      return (
+        placement &&
+        column >= placement.column &&
+        column < placement.column + placement.columns &&
+        row >= placement.row &&
+        row < placement.row + placement.rows
+      );
     });
+    if (target?.key === fromKey) return;
+
+    let nextRooms: MonitorRoom[];
+    if (target) {
+      const targetPlacement = currentPlacements?.get(target.key);
+      if (!targetPlacement) return;
+      nextRooms = rooms.map((room) => {
+        if (room.key === fromKey) {
+          return {
+            ...room,
+            position: { column: targetPlacement.column, row: targetPlacement.row },
+            size: target.size,
+          };
+        }
+        if (room.key === target.key) {
+          return {
+            ...room,
+            position: { column: fromPlacement.column, row: fromPlacement.row },
+            size: from.size,
+          };
+        }
+        return room;
+      });
+    } else {
+      const position = {
+        column: Math.min(column, grid.columns - from.size.columns + 1),
+        row: Math.min(row, grid.rows - from.size.rows + 1),
+      };
+      const overlapsRoom = rooms.some((room) => {
+        if (room.key === fromKey) return false;
+        const placement = currentPlacements.get(room.key);
+        return (
+          placement &&
+          position.column < placement.column + placement.columns &&
+          position.column + from.size.columns > placement.column &&
+          position.row < placement.row + placement.rows &&
+          position.row + from.size.rows > placement.row
+        );
+      });
+      if (overlapsRoom) {
+        showError("该位置无法容纳当前尺寸的直播间");
+        setNotice("");
+        return;
+      }
+      nextRooms = rooms.map((room) => (room.key === fromKey ? { ...room, position } : room));
+      const nextPlacement = packRoomGrid(nextRooms, grid)?.get(fromKey);
+      if (
+        !nextPlacement ||
+        nextPlacement.column !== position.column ||
+        nextPlacement.row !== position.row
+      ) {
+        showError("该位置无法容纳当前尺寸的直播间");
+        setNotice("");
+        return;
+      }
+    }
+    setWorkspace((previous) => ({ ...previous, rooms: nextRooms }));
+  };
+
+  const toggleWindowFullscreenForRoom = (key: string) => {
+    if (!isWailsRuntime()) return;
+    if (windowFullscreenRoomKey === key) {
+      void toggleWindowFullscreen();
+      return;
+    }
+    if (windowFullscreenRoomKey) return;
+    previousAudioFocusRef.current = [...audioFocusKeys];
+    setWindowFullscreenRoomKey(key);
+    setWorkspace((previous) => ({ ...previous, audioFocusKeys: [key] }));
+    void toggleWindowFullscreen();
   };
 
   const handleResize = (key: string, size: MonitorTileSize) => {
@@ -255,6 +444,7 @@ export function MonitorPage() {
   };
 
   const removeRoom = (key: string) => {
+    if (windowFullscreenRoomKey === key) void exitWindowFullscreen();
     setWorkspace((previous) => ({
       ...previous,
       rooms: previous.rooms.filter((room) => room.key !== key),
@@ -306,6 +496,7 @@ export function MonitorPage() {
         </div>
       ) : (
         <div
+          ref={gridRef}
           className={cn(styles.grid, dragOver && styles.dropActive)}
           style={{
             gridTemplateColumns: `repeat(${grid.columns}, minmax(0, 1fr))`,
@@ -332,7 +523,9 @@ export function MonitorPage() {
                 focused={audioFocusKeys.includes(room.key)}
                 soundEnabled={globalAudioEnabled}
                 globalVolume={globalVolume}
+                windowFullscreen={windowFullscreenRoomKey === room.key}
                 onAudioFocus={handleAudioFocus}
+                onToggleWindowFullscreen={toggleWindowFullscreenForRoom}
                 onDanmakuToggle={(key) =>
                   setWorkspace((previous) => ({
                     ...previous,

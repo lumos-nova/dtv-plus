@@ -15,10 +15,16 @@ export interface MonitorTileSize {
   rows: 1 | 2 | 3 | 4;
 }
 
+export interface GridPosition {
+  column: number;
+  row: number;
+}
+
 export interface MonitorRoom {
   key: string;
   platform: LivePlatform;
   roomId: string;
+  position?: GridPosition;
   size: MonitorTileSize;
   volume: number;
   danmakuEnabled: boolean;
@@ -50,8 +56,14 @@ export function swapRoomPositionsAndSizes(
   const to = next[toIndex];
   if (!from || !to || fromIndex === toIndex) return next;
 
-  next[fromIndex] = { ...to, size: from.size };
-  next[toIndex] = { ...from, size: to.size };
+  const movedTo = { ...to, size: from.size };
+  const movedFrom = { ...from, size: to.size };
+  if (from.position) movedTo.position = from.position;
+  else delete movedTo.position;
+  if (to.position) movedFrom.position = to.position;
+  else delete movedFrom.position;
+  next[fromIndex] = movedTo;
+  next[toIndex] = movedFrom;
   return next;
 }
 
@@ -62,6 +74,19 @@ function isRoomSize(value: unknown): value is MonitorTileSize {
   return validSizes.includes(size.columns as number) && validSizes.includes(size.rows as number);
 }
 
+function isGridPosition(value: unknown): value is GridPosition {
+  if (!value || typeof value !== "object") return false;
+  const position = value as Record<string, unknown>;
+  return (
+    Number.isInteger(position.column) &&
+    Number.isInteger(position.row) &&
+    Number(position.column) >= 1 &&
+    Number(position.column) <= MAX_GRID_SIZE &&
+    Number(position.row) >= 1 &&
+    Number(position.row) <= MAX_GRID_SIZE
+  );
+}
+
 export function packRoomGrid(
   rooms: readonly MonitorRoom[],
   grid: MonitorGridSize,
@@ -70,28 +95,41 @@ export function packRoomGrid(
     Array.from({ length: grid.columns }, () => false),
   );
   const placements = new Map<string, GridPlacement>();
+  const orderedRooms = [...rooms].sort(
+    (a, b) => Number(Boolean(b.position)) - Number(Boolean(a.position)),
+  );
 
-  for (const room of rooms) {
+  for (const room of orderedRooms) {
     if (room.size.columns > grid.columns || room.size.rows > grid.rows) return null;
     const columns = room.size.columns;
     const rows = room.size.rows;
     let placement: GridPlacement | null = null;
 
-    for (let row = 0; row <= grid.rows - rows && !placement; row += 1) {
-      for (let column = 0; column <= grid.columns - columns; column += 1) {
-        let free = true;
-        for (let y = row; y < row + rows && free; y += 1) {
-          for (let x = column; x < column + columns; x += 1) {
-            if (occupied[y]?.[x]) {
-              free = false;
-              break;
-            }
-          }
+    const tryPlaceAt = (column: number, row: number): GridPlacement | null => {
+      if (
+        column < 1 ||
+        row < 1 ||
+        column + columns - 1 > grid.columns ||
+        row + rows - 1 > grid.rows
+      ) {
+        return null;
+      }
+      for (let y = row - 1; y < row - 1 + rows; y += 1) {
+        for (let x = column - 1; x < column - 1 + columns; x += 1) {
+          if (occupied[y]?.[x]) return null;
         }
-        if (free) {
-          placement = { column: column + 1, row: row + 1, columns, rows };
-          break;
-        }
+      }
+      return { column, row, columns, rows };
+    };
+
+    if (room.position) {
+      placement = tryPlaceAt(room.position.column, room.position.row);
+    }
+
+    for (let row = 1; row <= grid.rows - rows + 1 && !placement; row += 1) {
+      for (let column = 1; column <= grid.columns - columns + 1; column += 1) {
+        placement = tryPlaceAt(column, row);
+        if (placement) break;
       }
     }
 
@@ -119,6 +157,13 @@ export function fitRoomGrid(
         columns: columns as MonitorGridSize["columns"],
         rows: rows as MonitorGridSize["rows"],
       };
+      const positionsFit = rooms.every(
+        (room) =>
+          !room.position ||
+          (room.position.column + room.size.columns - 1 <= candidate.columns &&
+            room.position.row + room.size.rows - 1 <= candidate.rows),
+      );
+      if (!positionsFit) continue;
       if (packRoomGrid(rooms, candidate)) candidates.push(candidate);
     }
   }
@@ -164,6 +209,7 @@ export function normalizeMonitorWorkspace(raw: unknown): {
       key,
       platform: platform as LivePlatform,
       roomId,
+      ...(isGridPosition(room.position) ? { position: room.position } : {}),
       size: isRoomSize(room.size) ? room.size : { columns: 1, rows: 1 },
       volume,
       danmakuEnabled: room.danmakuEnabled !== false,
