@@ -13,6 +13,7 @@ interface VolumeSliderProps {
   step?: number;
   className?: string;
   label?: string;
+  orientation?: "horizontal" | "vertical";
 }
 
 const clamp = (value: number, max: number) => Math.min(max, Math.max(0, value));
@@ -21,7 +22,7 @@ const clamp = (value: number, max: number) => Math.min(max, Math.max(0, value));
  * 音量条：没有拖动手柄，按住滑条左右滑就行。
  *
  * 设计上刻意不画 thumb —— 控制栏空间很紧，一个滑条 + 一个百分比数字已经
- * 足够表达"当前音量"。交互上整条都是热区（高 18px，比 4px 的轨道好点），
+ * 足够表达"当前音量"。交互上整条都是热区（比轨道本身更容易操作），
  * 按下即跳转到该位置并开始拖动；松手、指针离开、失焦都会结束拖动。
  *
  * 键盘可访问：方向键微调 5%，PageUp/PageDown 调 10%，Home/End 到范围端点。
@@ -33,6 +34,7 @@ export function VolumeSlider({
   step = max / 100,
   className,
   label = "音量",
+  orientation = "horizontal",
 }: VolumeSliderProps) {
   const trackRef = useRef<HTMLDivElement>(null);
   const [dragging, setDragging] = useState(false);
@@ -42,18 +44,23 @@ export function VolumeSlider({
   const percent = Math.round(clampedValue * 100);
   const fillPercent = Math.round((clampedValue / max) * 100);
 
-  const applyFromClientX = useCallback(
-    (clientX: number) => {
+  const applyFromPointer = useCallback(
+    (clientX: number, clientY: number) => {
       const el = trackRef.current;
       if (!el) return;
       const rect = el.getBoundingClientRect();
-      if (rect.width <= 0) return;
+      const length = orientation === "vertical" ? rect.height : rect.width;
+      if (length <= 0) return;
       // 按调用方步长取整，避免浮点抖动并让数值稳定
-      const rawValue = clamp(((clientX - rect.left) / rect.width) * max, max);
+      const progress =
+        orientation === "vertical"
+          ? (rect.bottom - clientY) / rect.height
+          : (clientX - rect.left) / rect.width;
+      const rawValue = clamp(progress * max, max);
       const steppedValue = Math.round(rawValue / step) * step;
       onChange(Number(clamp(steppedValue, max).toFixed(2)));
     },
-    [max, onChange, step],
+    [max, onChange, orientation, step],
   );
 
   const onPointerDown = useCallback(
@@ -67,17 +74,17 @@ export function VolumeSlider({
         // 忽略：没有捕获也能靠 pointermove 拖动
       }
       setDragging(true);
-      applyFromClientX(event.clientX);
+      applyFromPointer(event.clientX, event.clientY);
     },
-    [applyFromClientX],
+    [applyFromPointer],
   );
 
   const onPointerMove = useCallback(
     (event: React.PointerEvent<HTMLDivElement>) => {
       if (!dragging) return;
-      applyFromClientX(event.clientX);
+      applyFromPointer(event.clientX, event.clientY);
     },
-    [applyFromClientX, dragging],
+    [applyFromPointer, dragging],
   );
 
   const endDrag = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
@@ -97,10 +104,16 @@ export function VolumeSlider({
       let next: number | null = null;
       switch (event.key) {
         case "ArrowLeft":
-        case "ArrowDown":
+          if (orientation === "vertical") return;
           next = current - max * KEYBOARD_STEP;
           break;
         case "ArrowRight":
+          if (orientation === "vertical") return;
+          next = current + max * KEYBOARD_STEP;
+          break;
+        case "ArrowDown":
+          next = current - max * KEYBOARD_STEP;
+          break;
         case "ArrowUp":
           next = current + max * KEYBOARD_STEP;
           break;
@@ -122,7 +135,7 @@ export function VolumeSlider({
       event.preventDefault();
       onChange(Number(clamp(Math.round(next / step) * step, max).toFixed(2)));
     },
-    [max, onChange, step, value],
+    [max, onChange, orientation, step, value],
   );
 
   return (
@@ -130,6 +143,7 @@ export function VolumeSlider({
       ref={trackRef}
       className={cn(
         styles.slider,
+        orientation === "vertical" && styles.vertical,
         (dragging || hovering) && styles.active,
         dragging && styles.dragging,
         className,
@@ -141,7 +155,8 @@ export function VolumeSlider({
       aria-valuemax={Math.round(max * 100)}
       aria-valuenow={percent}
       aria-valuetext={`${percent}%`}
-      title={`${label} ${percent}%（按住左右拖动）`}
+      aria-orientation={orientation}
+      title={`${label} ${percent}%（按住${orientation === "vertical" ? "上下" : "左右"}拖动）`}
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}
       onPointerUp={endDrag}
@@ -154,7 +169,14 @@ export function VolumeSlider({
       onKeyDown={onKeyDown}
     >
       <div className={styles.rail}>
-        <div className={styles.fill} style={{ width: `${fillPercent}%` }} />
+        <div
+          className={styles.fill}
+          style={
+            orientation === "vertical"
+              ? { height: `${fillPercent}%` }
+              : { width: `${fillPercent}%` }
+          }
+        />
       </div>
     </div>
   );

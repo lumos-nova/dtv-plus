@@ -1,6 +1,7 @@
 import { Check, Grid2X2 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type DragEvent } from "react";
-import { PLATFORM_LABEL, type LivePlatform } from "@/api";
+import { LIVE_PLATFORMS, PLATFORM_LABEL, type LivePlatform } from "@/api";
+import { useLocation, useNavigate } from "react-router-dom";
 import { RoomTile } from "@/features/multiview/RoomTile";
 import { useDanmuBlock } from "@/features/player/useDanmuBlock";
 import {
@@ -45,11 +46,14 @@ function droppedLink(event: DragEvent<HTMLElement>): string {
 }
 
 export function MonitorPage() {
+  const location = useLocation();
+  const navigate = useNavigate();
   const { rooms, grid, audioFocusKeys, setWorkspace } = useMonitorWorkspace();
   const danmuBlock = useDanmuBlock();
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [dragOver, setDragOver] = useState(false);
+  const [draggingRoom, setDraggingRoom] = useState(false);
   const [globalAudioEnabled, setGlobalAudioEnabled] = useState(
     () => loadAppSettings().globalAudioEnabled,
   );
@@ -58,6 +62,8 @@ export function MonitorPage() {
   const errorTimerRef = useRef<number | null>(null);
   const gridRef = useRef<HTMLDivElement>(null);
   const previousAudioFocusRef = useRef<string[] | null>(null);
+  const handledMonitorRequestRef = useRef<string | null>(null);
+  const addRoomRef = useRef<(platform: LivePlatform, roomId: string) => void>(() => undefined);
   const placements = useMemo(() => packRoomGrid(rooms, grid), [grid, rooms]);
 
   const showError = (message: string) => {
@@ -197,6 +203,7 @@ export function MonitorPage() {
         platform,
         roomId,
         size: { columns: 1, rows: 1 },
+        lineId: "",
         volume: 0.7,
         danmakuEnabled: danmakuPreferences.enabled,
         danmakuSettings: { ...DEFAULT_DANMU_SETTINGS, ...danmakuPreferences.settings },
@@ -218,6 +225,30 @@ export function MonitorPage() {
     clearError();
     setNotice(`${platformLabel(platform)}房间 ${roomId} 已加入工作台`);
   };
+  addRoomRef.current = addRoom;
+
+  useEffect(() => {
+    if (!location.state || typeof location.state !== "object") return;
+    const request = (location.state as Record<string, unknown>).dtvMonitorRoom;
+    if (!request || typeof request !== "object") return;
+    const payload = request as Record<string, unknown>;
+    if (
+      typeof payload.platform !== "string" ||
+      !LIVE_PLATFORMS.includes(payload.platform as LivePlatform) ||
+      typeof payload.roomId !== "string" ||
+      !/^\d+$/.test(payload.roomId) ||
+      handledMonitorRequestRef.current === location.key
+    ) {
+      return;
+    }
+
+    handledMonitorRequestRef.current = location.key;
+    addRoomRef.current(payload.platform as LivePlatform, payload.roomId);
+    navigate(`${location.pathname}${location.search}${location.hash}`, {
+      replace: true,
+      state: null,
+    });
+  }, [location.hash, location.key, location.pathname, location.search, location.state, navigate]);
 
   const handleDrop = (event: DragEvent<HTMLDivElement>) => {
     const followPayload = event.dataTransfer.getData(FOLLOW_ROOM_DRAG_TYPE);
@@ -550,13 +581,22 @@ export function MonitorPage() {
                 onRemoveBlockKeyword={danmuBlock.removeKeyword}
                 onClearBlockKeywords={danmuBlock.clearKeywords}
                 onVolumeChange={(key, volume) => updateRoom(key, { volume })}
+                onLineChange={(key, lineId) => updateRoom(key, { lineId })}
                 onQualityChange={(key, qualityId) => updateRoom(key, { qualityId })}
                 onRemove={removeRoom}
                 onMove={moveRoom}
+                onDraggingChange={(_key, dragging) => setDraggingRoom(dragging)}
                 onResize={handleResize}
               />
             );
           })}
+          {draggingRoom && (
+            <div className={styles.gridGuideOverlay} aria-hidden="true">
+              {Array.from({ length: 16 }, (_, index) => (
+                <span key={index} />
+              ))}
+            </div>
+          )}
         </div>
       )}
     </section>

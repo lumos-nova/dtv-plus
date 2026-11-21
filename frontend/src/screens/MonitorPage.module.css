@@ -98,11 +98,30 @@
 }
 
 .grid {
+  position: relative;
   display: grid;
   gap: 8px;
   padding: 7px;
   overflow: auto;
   border-style: solid;
+}
+
+.gridGuideOverlay {
+  position: absolute;
+  z-index: 30;
+  inset: 0;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-rows: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  padding: 7px;
+  pointer-events: none;
+}
+
+.gridGuideOverlay span {
+  border: 1px dashed color-mix(in srgb, var(--accent) 78%, white);
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--accent-softer) 10%, transparent);
 }
 
 .dropActive {
@@ -112,6 +131,11 @@
 
 @media (max-width: 650px) {
   .grid {
+    gap: 5px;
+    padding: 4px;
+  }
+
+  .gridGuideOverlay {
     gap: 5px;
     padding: 4px;
   }

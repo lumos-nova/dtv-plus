@@ -9,6 +9,7 @@
   border: 1px solid var(--border);
   border-radius: var(--radius-full);
   background: var(--fill-quaternary);
+  --wails-draggable: no-drag;
 }
 
 .watchTime {
@@ -50,6 +51,26 @@
   .controls {
     gap: 3px;
     padding-inline: 5px;
+  }
+
+  @media (max-width: 1360px) {
+    .controls {
+      gap: 3px;
+      padding-inline: 5px;
+    }
+
+    .watchTime {
+      gap: 3px;
+      font-size: 10px;
+    }
+
+    .watchTime > span:first-child {
+      display: none;
+    }
+
+    .volume {
+      width: 54px;
+    }
   }
 
   .volume {

@@ -1,6 +1,7 @@
 .wrap {
   position: relative;
   display: inline-flex;
+  --wails-draggable: no-drag;
 }
 
 .button {
@@ -59,12 +60,33 @@
   accent-color: var(--accent);
 }
 
-.popover select {
+.areaDropdown {
+  width: 100%;
   min-width: 0;
+}
+
+.areaControl {
+  width: 100%;
   height: 30px;
-  padding: 0 7px;
+  justify-content: space-between;
+  padding: 0 9px;
   border: 1px solid var(--border);
   border-radius: 8px;
   background: var(--bg-primary);
   color: var(--text-primary);
+  font: inherit;
+}
+
+.areaControl:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.areaControl:hover {
+  color: var(--text-primary);
+}
+
+.areaOptions {
+  width: 100%;
+  min-width: 100%;
 }

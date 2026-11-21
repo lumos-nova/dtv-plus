@@ -159,11 +159,19 @@
   gap: 12px;
 }
 
+.audioControl {
+  position: relative;
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+}
+
 .roomControls {
   display: flex;
   flex: 0 0 auto;
   align-items: center;
   gap: 10px;
+  margin-left: auto;
 }
 
 .iconButton:hover,
@@ -193,9 +201,9 @@
 
 .footer {
   inset: auto 0 0;
-  min-height: 54px;
+  min-height: 72px;
   gap: 12px;
-  padding: 10px 14px 12px;
+  padding: 6px 14px 8px;
   background: linear-gradient(0deg, rgba(0, 0, 0, 0.3), transparent);
 }
 
@@ -221,25 +229,52 @@
 }
 
 .volumeControl {
+  position: absolute;
+  z-index: 20;
+  bottom: calc(100% - 1px);
+  left: 50%;
   display: flex;
-  flex: 1;
-  min-width: 0;
+  flex-direction: column;
+  width: 42px;
+  min-width: 42px;
   align-items: center;
-  gap: 8px;
-  padding-left: 6px;
+  justify-content: center;
+  gap: 2px;
+  padding: 6px 4px 5px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 8px;
+  background: rgba(10, 11, 13, 0.94);
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.38);
+  visibility: hidden;
+  opacity: 0;
   color: rgba(255, 255, 255, 0.82);
+  transition:
+    opacity 120ms ease,
+    transform 120ms ease,
+    visibility 120ms ease;
+  transform: translate(-50%, 4px);
+}
+
+.audioControl:hover .volumeControl,
+.audioControl:focus-within .volumeControl {
+  visibility: visible;
+  opacity: 1;
+  pointer-events: auto;
+  transform: translate(-50%, 0);
 }
 
 .volumeSlider {
-  --volume-slider-width: 96px;
+  --volume-slider-width: 18px;
+  --volume-slider-height: 42px;
 }
 
 .volumeValue {
-  min-width: 36px;
+  min-width: 0;
   color: var(--player-accent);
-  font-size: 12px;
+  font-size: 9px;
   font-variant-numeric: tabular-nums;
-  text-align: right;
+  text-align: center;
+  line-height: 1;
 }
 
 .boostWarning {
@@ -402,22 +437,25 @@
   }
 
   .volumeControl {
+    width: 38px;
+    min-width: 38px;
     gap: 3px;
-    padding-left: 0;
+    padding: 5px 3px 4px;
   }
 
   .volumeSlider {
-    --volume-slider-width: 34px;
+    --volume-slider-width: 18px;
+    --volume-slider-height: 38px;
   }
 
   .volumeValue {
-    display: none;
+    font-size: 8px;
   }
 }
 
 @container (max-width: 200px) {
   .footer {
-    min-height: 62px;
+    min-height: 108px;
     flex-wrap: wrap;
     gap: 0 2px;
     padding: 3px 4px 5px;
@@ -428,15 +466,18 @@
   }
 
   .volumeControl {
-    flex: 1 1 32px;
+    width: 36px;
+    min-width: 36px;
   }
 
   .volumeSlider {
-    --volume-slider-width: 28px;
+    --volume-slider-width: 16px;
+    --volume-slider-height: 36px;
   }
 
   .roomControls {
     flex: 1 1 100%;
+    flex-wrap: wrap;
     justify-content: flex-end;
     gap: 0;
   }
@@ -477,8 +518,12 @@
   }
 
   .footer {
-    min-height: 56px;
+    min-height: 128px;
     padding: 2px;
+  }
+
+  .roomControls {
+    row-gap: 2px;
   }
 
   .footer .iconButton {
@@ -492,6 +537,13 @@
   }
 
   .volumeSlider {
-    --volume-slider-width: 20px;
+    --volume-slider-width: 15px;
+    --volume-slider-height: 32px;
+  }
+
+  .volumeControl {
+    width: 34px;
+    min-width: 34px;
+    padding: 4px 2px 3px;
   }
 }

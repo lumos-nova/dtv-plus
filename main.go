@@ -38,7 +38,8 @@ type windowState struct {
 const (
 	defaultWindowWidth  = 1440
 	defaultWindowHeight = 810
-	minWindowWidth      = 900
+	minWindowWidth      = 1100
+	minSavedWindowWidth = 900
 	minWindowHeight     = 600
 )
 
@@ -52,7 +53,7 @@ func validWindowBounds(x, y, width, height int) bool {
 	if x <= -10000 || y <= -10000 || x > 100000 || y > 100000 {
 		return false
 	}
-	return width >= minWindowWidth && height >= minWindowHeight
+	return width >= minSavedWindowWidth && height >= minWindowHeight
 }
 
 func loadWindowState() (windowState, bool) {
@@ -64,7 +65,7 @@ func loadWindowState() (windowState, bool) {
 	if err := json.Unmarshal(raw, &state); err != nil {
 		return windowState{}, false
 	}
-	if state.Width < minWindowWidth || state.Height < minWindowHeight {
+	if state.Width < minSavedWindowWidth || state.Height < minWindowHeight {
 		return windowState{}, false
 	}
 	return state, true
@@ -129,6 +130,7 @@ func main() {
 	position := application.WindowCentered
 	x, y := 0, 0
 	maximised := false
+	windowMinWidth := minWindowWidth
 
 	if hasState {
 		width, height = state.Width, state.Height
@@ -140,6 +142,9 @@ func main() {
 	if screen := app.Screen.GetPrimary(); screen != nil {
 		if screen.WorkArea.Width > 0 && width > screen.WorkArea.Width {
 			width = screen.WorkArea.Width
+		}
+		if screen.WorkArea.Width > 0 && windowMinWidth > screen.WorkArea.Width {
+			windowMinWidth = screen.WorkArea.Width
 		}
 		if screen.WorkArea.Height > 0 && height > screen.WorkArea.Height {
 			height = screen.WorkArea.Height
@@ -165,6 +170,9 @@ func main() {
 				x, y = state.X, state.Y
 			}
 		}
+	}
+	if width < windowMinWidth {
+		width = windowMinWidth
 	}
 
 	// 斗鱼 Service 必须在 app 创建之后注册：它的弹幕回调要把事件发到
@@ -200,7 +208,7 @@ func main() {
 		InitialPosition: position,
 		X:               x,
 		Y:               y,
-		MinWidth:        minWindowWidth,
+		MinWidth:        windowMinWidth,
 		MinHeight:       minWindowHeight,
 		// 与 Tauri 版一致：无系统标题栏，标题栏由前端 Navbar 自绘
 		// （前端通过 CSS `--wails-draggable: drag` 提供拖拽区域）

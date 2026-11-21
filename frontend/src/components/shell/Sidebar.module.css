@@ -5,7 +5,7 @@
   display: flex;
   flex-direction: column;
   flex: 0 0 auto;
-  width: min(var(--sidebar-width), 42vw);
+  width: min(var(--sidebar-width), 42vw, max(160px, calc(100vw - 1110px)));
   height: 100%;
   z-index: 100;
   /* 与二级分类 chip 使用同一档表面色（日夜模式自动跟随 token） */
@@ -49,4 +49,16 @@
 .resizeHandle:hover,
 .resizeHandle:active {
   background: color-mix(in srgb, var(--accent) 45%, transparent);
+}
+
+@media (max-width: 1360px) {
+  .sidebar:not(.collapsed) {
+    width: min(var(--sidebar-width), 42vw, max(160px, calc(100vw - 880px)));
+  }
+}
+
+@media (max-width: 1100px) {
+  .sidebar:not(.collapsed) {
+    width: min(var(--sidebar-width), 42vw, max(160px, calc(100vw - 880px)));
+  }
 }

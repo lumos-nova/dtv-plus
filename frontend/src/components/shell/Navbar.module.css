@@ -13,6 +13,7 @@
   background: var(--bg-primary);
   min-width: 0;
   overflow: visible;
+  --wails-draggable: drag;
 }
 
 /* 书页·日：顶栏不要再单独铺一层实色，直接透出下方同一张纸张背景 */
@@ -475,7 +476,7 @@
 }
 
 /* 窄窗口（<1240px）收紧顶栏，保证窗口按钮不被挤出 */
-@media (max-width: 1240px) {
+@media (max-width: 1360px) {
   .navbar {
     gap: 8px;
     padding: 0 10px;
@@ -506,5 +507,25 @@
 
   .palettePanel {
     width: min(352px, calc(100vw - 24px));
+  }
+}
+
+@media (max-width: 900px) {
+  .navbar {
+    gap: 6px;
+    padding-inline: 8px;
+  }
+
+  .actions {
+    gap: 5px;
+  }
+
+  .toolGroup {
+    gap: 0;
+  }
+
+  .iconBtn {
+    width: 32px;
+    height: 34px;
   }
 }

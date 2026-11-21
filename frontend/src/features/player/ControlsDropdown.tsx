@@ -15,6 +15,10 @@ export function ControlsDropdown({
   options,
   onSelect,
   onOpenChange,
+  openOnHover = true,
+  className,
+  controlClassName,
+  dropdownClassName,
 }: {
   label: string;
   valueId: string;
@@ -22,6 +26,10 @@ export function ControlsDropdown({
   options: ControlsDropdownOption[];
   onSelect: (id: string) => void;
   onOpenChange?: (open: boolean) => void;
+  openOnHover?: boolean;
+  className?: string;
+  controlClassName?: string;
+  dropdownClassName?: string;
 }) {
   const [open, setOpen] = useState(false);
   const wrapRef = useRef<HTMLDivElement>(null);
@@ -73,17 +81,20 @@ export function ControlsDropdown({
 
   return (
     <div
-      className={styles.menuWrap}
+      className={cn(styles.menuWrap, className)}
       ref={wrapRef}
       onMouseEnter={() => {
+        if (!openOnHover) return;
         cancelClose();
         setOpen(true);
       }}
-      onMouseLeave={scheduleClose}
+      onMouseLeave={() => {
+        if (openOnHover) scheduleClose();
+      }}
     >
       <button
         type="button"
-        className={cn(styles.controlItem, open && styles.menuOpen)}
+        className={cn(styles.controlItem, controlClassName, open && styles.menuOpen)}
         onClick={() => setOpen((value) => !value)}
         aria-label={`${label}：${valueLabel}`}
         aria-haspopup="menu"
@@ -93,7 +104,7 @@ export function ControlsDropdown({
         <ChevronDown size={10} className={cn(styles.caret, open && styles.caretOpen)} />
       </button>
       {open && (
-        <div className={styles.dropdown} role="menu" aria-label={label}>
+        <div className={cn(styles.dropdown, dropdownClassName)} role="menu" aria-label={label}>
           {options.map((option) => (
             <button
               key={option.id}

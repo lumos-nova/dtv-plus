@@ -26,6 +26,7 @@ export interface MonitorRoom {
   roomId: string;
   position?: GridPosition;
   size: MonitorTileSize;
+  lineId: string;
   volume: number;
   danmakuEnabled: boolean;
   danmakuSettings: DanmuUserSettings;
@@ -211,6 +212,7 @@ export function normalizeMonitorWorkspace(raw: unknown): {
       roomId,
       ...(isGridPosition(room.position) ? { position: room.position } : {}),
       size: isRoomSize(room.size) ? room.size : { columns: 1, rows: 1 },
+      lineId: typeof room.lineId === "string" ? room.lineId.slice(0, 128) : "",
       volume,
       danmakuEnabled: room.danmakuEnabled !== false,
       danmakuSettings: normalizeDanmuSettings(

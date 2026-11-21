@@ -16,6 +16,7 @@ import {
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { createPortal } from "react-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import { SmoothImage } from "@/components/common/SmoothImage";
 import { RingProgress } from "@/components/ui/RingProgress";
 import { Modal } from "@/components/ui/Modal";
@@ -68,6 +69,8 @@ export function FollowsList({
   onToggleCollapsed: () => void;
 }) {
   const openRoom = useOpenPlayer();
+  const navigate = useNavigate();
+  const location = useLocation();
   const { toast } = useToast();
   const {
     follows,
@@ -113,6 +116,11 @@ export function FollowsList({
     top: number;
   } | null>(null);
   const collapsedCloseTimer = useRef<number | null>(null);
+  const rowClickTimerRef = useRef<{
+    key: string;
+    record: FollowRecord;
+    timer: number;
+  } | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
   const addRoomInputRef = useRef<HTMLInputElement | null>(null);
   const addRoomTriggerRef = useRef<HTMLButtonElement | null>(null);
@@ -211,6 +219,9 @@ export function FollowsList({
       if (collapsedCloseTimer.current != null) {
         window.clearTimeout(collapsedCloseTimer.current);
       }
+      if (rowClickTimerRef.current != null) {
+        window.clearTimeout(rowClickTimerRef.current.timer);
+      }
     };
   }, []);
 
@@ -269,6 +280,34 @@ export function FollowsList({
     },
     [openRoom],
   );
+
+  const openMonitorRoom = (record: FollowRecord) => {
+    setCollapsedFolder(null);
+    navigate("/monitor", {
+      replace: location.pathname === "/monitor",
+      state: { dtvMonitorRoom: { platform: record.platform, roomId: record.id } },
+    });
+  };
+
+  const handleRowClick = (record: FollowRecord) => {
+    const key = followKey(record.platform, record.id);
+    const pending = rowClickTimerRef.current;
+    if (pending?.key === key) {
+      window.clearTimeout(pending.timer);
+      rowClickTimerRef.current = null;
+      return;
+    }
+    if (pending) {
+      window.clearTimeout(pending.timer);
+      rowClickTimerRef.current = null;
+      openPlayer(pending.record);
+    }
+    const timer = window.setTimeout(() => {
+      if (rowClickTimerRef.current?.timer === timer) rowClickTimerRef.current = null;
+      openPlayer(record);
+    }, 240);
+    rowClickTimerRef.current = { key, record, timer };
+  };
 
   const handleRefresh = useCallback(async () => {
     // 启动时的自动刷新也走同一条链路，这里顺手挡掉重复点击
@@ -608,7 +647,8 @@ export function FollowsList({
               ? (event) => showListHover(opts.listId as string, event.currentTarget)
               : undefined
           }
-          onClick={() => openPlayer(record)}
+          onClick={() => (opts.plain ? openPlayer(record) : handleRowClick(record))}
+          onDoubleClick={opts.plain ? undefined : () => openMonitorRoom(record)}
           onContextMenu={(e) => openStreamerMenu(e, record)}
           role="button"
           tabIndex={0}

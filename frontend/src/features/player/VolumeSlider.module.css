@@ -1,8 +1,8 @@
 /* =============================================================================
  * 音量条（无拖动手柄，整条可按住拖动）
  *
- * 结构：.slider（18px 高的热区）> .rail（4px 轨道）> .fill（已填充部分）
- * 没有 thumb：轨道本身就是滑块的替代物，hover / 拖动时轨道变粗、填充变亮。
+ * 结构：.slider 热区 > .rail 轨道 > .fill 已填充部分。
+ * 默认横向；.vertical 改成从底部向上填充的竖向音量条。
  * ========================================================================== */
 
 .slider {
@@ -49,6 +49,29 @@
 .slider:focus-visible .rail {
   height: 6px;
   box-shadow: 0 0 0 2px var(--player-accent-strong);
+}
+
+.vertical {
+  width: 18px;
+  height: var(--volume-slider-height, 56px);
+  justify-content: center;
+  cursor: ns-resize;
+}
+
+.vertical .rail {
+  width: 4px;
+  height: 100%;
+}
+
+.vertical .fill {
+  inset: auto 0 0;
+  width: 100%;
+}
+
+.vertical.active .rail,
+.vertical:focus-visible .rail {
+  width: 6px;
+  height: 100%;
 }
 
 /* 拖动过程中不要给填充加过渡，否则跟不上指针 */

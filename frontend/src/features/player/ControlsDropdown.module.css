@@ -18,6 +18,11 @@
   transition: color 0.2s ease;
 }
 
+.controlItem:focus-visible {
+  outline: 2px solid var(--player-accent);
+  outline-offset: 2px;
+}
+
 .controlItem:hover,
 .menuOpen {
   color: #ffffff;

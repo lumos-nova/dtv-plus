@@ -30,6 +30,7 @@ import styles from "./RoomTile.module.css";
 
 const MAX_MESSAGES = 120;
 const MESSAGE_FLUSH_MS = 150;
+const ROOM_DRAG_HOLD_MS = 220;
 let lastRoomDragEndedAt = 0;
 
 interface RoomTileProps {
@@ -49,9 +50,11 @@ interface RoomTileProps {
   onRemoveBlockKeyword: (keyword: string) => void;
   onClearBlockKeywords: () => void;
   onVolumeChange: (key: string, volume: number) => void;
+  onLineChange: (key: string, lineId: string) => void;
   onQualityChange: (key: string, qualityId: string) => void;
   onRemove: (key: string) => void;
   onMove: (fromKey: string, clientX: number, clientY: number) => void;
+  onDraggingChange: (key: string, dragging: boolean) => void;
   onResize: (key: string, size: MonitorTileSize) => void;
 }
 
@@ -72,9 +75,11 @@ export function RoomTile({
   onRemoveBlockKeyword,
   onClearBlockKeywords,
   onVolumeChange,
+  onLineChange,
   onQualityChange,
   onRemove,
   onMove,
+  onDraggingChange,
   onResize,
 }: RoomTileProps) {
   const tileRef = useRef<HTMLElement>(null);
@@ -98,6 +103,8 @@ export function RoomTile({
   } | null>(null);
   const onMoveRef = useRef(onMove);
   onMoveRef.current = onMove;
+  const onDraggingChangeRef = useRef(onDraggingChange);
+  onDraggingChangeRef.current = onDraggingChange;
   const messageBufferRef = useRef<DanmakuMessage[]>([]);
   const blockKeywordsLowerRef = useRef(blockKeywordsLower);
   blockKeywordsLowerRef.current = blockKeywordsLower;
@@ -145,6 +152,7 @@ export function RoomTile({
       setLongPressDragging(false);
       setDropTarget(false);
       setMoveOffset({ x: 0, y: 0 });
+      if (gesture.active) onDraggingChangeRef.current(room.key, false);
       if (!gesture.active || event.type === "pointercancel") return;
       event.preventDefault();
       lastRoomDragEndedAt = Date.now();
@@ -162,7 +170,10 @@ export function RoomTile({
       window.removeEventListener("pointerup", onPointerEnd);
       window.removeEventListener("pointercancel", onPointerEnd);
       document.removeEventListener("fullscreenchange", onFullscreenChange);
-      if (moveGestureRef.current) window.clearTimeout(moveGestureRef.current.timer);
+      if (moveGestureRef.current) {
+        window.clearTimeout(moveGestureRef.current.timer);
+        if (moveGestureRef.current.active) onDraggingChangeRef.current(room.key, false);
+      }
     };
   }, [room.key]);
 
@@ -188,7 +199,8 @@ export function RoomTile({
       gesture.active = true;
       setMoveOffset({ x: 0, y: 0 });
       setLongPressDragging(true);
-    }, 350);
+      onDraggingChangeRef.current(room.key, true);
+    }, ROOM_DRAG_HOLD_MS);
     moveGestureRef.current = gesture;
   };
 
@@ -197,7 +209,7 @@ export function RoomTile({
     setInfo(null);
     setInfoError("");
     void api
-      .getStreamInfo(room.platform, room.roomId)
+      .getStreamInfo(room.platform, room.roomId, room.lineId)
       .then((next) => {
         if (!cancelled) {
           setInfo(next);
@@ -211,7 +223,7 @@ export function RoomTile({
     return () => {
       cancelled = true;
     };
-  }, [retryKey, room.platform, room.roomId]);
+  }, [retryKey, room.lineId, room.platform, room.roomId]);
 
   const variant =
     info?.variants.find((item) => item.id === room.qualityId) ??
@@ -347,6 +359,7 @@ export function RoomTile({
     id: item.id,
     label: /蓝光|bluray/i.test(item.label) ? "蓝光" : item.label,
   }));
+  const activeLine = info?.lines.find((item) => item.id === room.lineId) ?? info?.lines[0];
   const toggleTileFullscreen = async () => {
     const tile = tileRef.current;
     if (!tile) return;
@@ -488,6 +501,8 @@ export function RoomTile({
             >
               <RotateCw size={19} strokeWidth={2} />
             </button>
+          </div>
+          <div className={styles.audioControl}>
             <button
               type="button"
               className={cn(styles.iconButton, focused && styles.activeButton)}
@@ -501,20 +516,21 @@ export function RoomTile({
             >
               {focused ? <Volume2 size={18} /> : <VolumeX size={18} />}
             </button>
-          </div>
-          <div className={styles.volumeControl}>
-            <VolumeSlider
-              className={styles.volumeSlider}
-              label="房间音量"
-              value={room.volume}
-              max={2}
-              step={0.05}
-              onChange={(volume) => {
-                if (volume > 1) player.activateAudioBoost();
-                onVolumeChange(room.key, volume);
-              }}
-            />
-            <span className={styles.volumeValue}>{Math.round(room.volume * 100)}%</span>
+            <div className={styles.volumeControl}>
+              <VolumeSlider
+                className={styles.volumeSlider}
+                label="房间音量"
+                value={room.volume}
+                max={2}
+                step={0.05}
+                orientation="vertical"
+                onChange={(volume) => {
+                  if (volume > 1) player.activateAudioBoost();
+                  onVolumeChange(room.key, volume);
+                }}
+              />
+              <span className={styles.volumeValue}>{Math.round(room.volume * 100)}%</span>
+            </div>
           </div>
           {room.volume > 1 && !player.audioBoostSupported && (
             <span className={styles.boostWarning} role="status">
@@ -553,6 +569,15 @@ export function RoomTile({
               onChange={(patch) => onDanmakuSettingsChange(room.key, patch)}
               supportsColor={["douyu", "huya", "bilibili"].includes(room.platform)}
             />
+            {info && info.lines.length > 1 && (
+              <ControlsDropdown
+                label="线路"
+                valueId={activeLine?.id ?? ""}
+                valueLabel={activeLine?.label ?? "线路"}
+                options={info.lines.map((item) => ({ id: item.id, label: item.label }))}
+                onSelect={(lineId) => onLineChange(room.key, lineId)}
+              />
+            )}
             <ControlsDropdown
               label="清晰度"
               valueId={variant?.id ?? ""}

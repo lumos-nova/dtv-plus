@@ -17,6 +17,7 @@ function room(
     platform: "douyu",
     roomId: String(index),
     size: { columns, rows },
+    lineId: "",
     volume: 0.7,
     danmakuEnabled: true,
     danmakuSettings: {
@@ -138,10 +139,18 @@ describe("monitor layout", () => {
   it("normalizes persisted room controls and valid danmaku preferences", () => {
     const restored = normalizeMonitorWorkspace({
       grid: { columns: 2, rows: 2 },
-      rooms: [{ ...room(1), qualityId: "invalid", danmakuSettings: { opacity: 4 } }],
+      rooms: [
+        {
+          ...room(1),
+          qualityId: "invalid",
+          lineId: "tx",
+          danmakuSettings: { opacity: 4 },
+        },
+      ],
     });
 
     expect(restored.rooms[0]?.qualityId).toBe("invalid");
+    expect(restored.rooms[0]?.lineId).toBe("tx");
     expect(restored.rooms[0]?.danmakuSettings.opacity).toBe(1);
     expect(restored.rooms[0]?.danmakuSettings.fontSize).toBe("20px");
   });

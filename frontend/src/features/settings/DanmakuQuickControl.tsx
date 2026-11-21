@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useDanmuPreferences } from "@/features/player/useDanmuPreferences";
+import { ControlsDropdown } from "@/features/player/ControlsDropdown";
 import {
   DANMU_AREA_OPTIONS,
   DANMU_FONT_MAX,
@@ -98,16 +99,20 @@ export function DanmakuQuickControl() {
           </label>
           <label>
             显示区域
-            <select
-              value={settings.area}
-              onChange={(event) => changeSettings({ area: Number(event.target.value) })}
-            >
-              {DANMU_AREA_OPTIONS.map((area) => (
-                <option key={area} value={area}>
-                  {area === 1 ? "全屏" : `上 ${Math.round(area * 100)}%`}
-                </option>
-              ))}
-            </select>
+            <ControlsDropdown
+              label="显示区域"
+              valueId={String(settings.area)}
+              valueLabel={settings.area === 1 ? "全屏" : `上 ${Math.round(settings.area * 100)}%`}
+              options={DANMU_AREA_OPTIONS.map((area) => ({
+                id: String(area),
+                label: area === 1 ? "全屏" : `上 ${Math.round(area * 100)}%`,
+              }))}
+              onSelect={(area) => changeSettings({ area: Number(area) })}
+              openOnHover={false}
+              className={styles.areaDropdown}
+              controlClassName={styles.areaControl}
+              dropdownClassName={styles.areaOptions}
+            />
           </label>
         </div>
       )}
