@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
-import type { MonitorRoom } from "./layout";
+import type { GridPlacement, MonitorRoom, ResizeDirection } from "./layout";
 import {
   fitRoomGrid,
+  gridPlacementsOverlap,
   normalizeMonitorWorkspace,
   packRoomGrid,
+  resizeGridPlacement,
   swapRoomPositionsAndSizes,
 } from "./layout";
 
@@ -51,13 +53,13 @@ describe("monitor layout", () => {
     expect(packed?.get("douyu:3")).toMatchObject({ column: 2, row: 1 });
   });
 
-  it("keeps explicitly positioned rooms within the selected grid after restore", () => {
+  it("restores explicitly positioned rooms on the fixed 4×4 grid", () => {
     const restored = normalizeMonitorWorkspace({
       grid: { columns: 4, rows: 4 },
       rooms: [{ ...room(1), position: { column: 3, row: 2 } }],
     });
 
-    expect(restored.grid).toEqual({ columns: 3, rows: 2 });
+    expect(restored.grid).toEqual({ columns: 4, rows: 4 });
     expect(packRoomGrid(restored.rooms, restored.grid)?.get("douyu:1")).toMatchObject({
       column: 3,
       row: 2,
@@ -86,13 +88,13 @@ describe("monitor layout", () => {
     ).toEqual({ columns: 2, rows: 3 });
   });
 
-  it("resets a legacy oversized grid to the preferred automatic 2×2 layout", () => {
+  it("uses the fixed 4×4 grid for existing workspaces", () => {
     const restored = normalizeMonitorWorkspace({
       grid: { columns: 4, rows: 4 },
       rooms: [room(1), room(2)],
     });
 
-    expect(restored.grid).toEqual({ columns: 2, rows: 2 });
+    expect(restored.grid).toEqual({ columns: 4, rows: 4 });
   });
 
   it("supports tiles spanning up to four grid cells in either direction", () => {
@@ -103,6 +105,35 @@ describe("monitor layout", () => {
       rooms: [{ ...room(1), size: { columns: 3, rows: 2 } }],
     });
     expect(restored.rooms[0]?.size).toEqual({ columns: 3, rows: 2 });
+  });
+
+  it("keeps the opposite edges fixed when resizing from each direction", () => {
+    const start = { column: 2, row: 2, columns: 1, rows: 1 };
+
+    const cases: [ResizeDirection, GridPlacement][] = [
+      ["n", { column: 2, row: 1, columns: 2, rows: 2 }],
+      ["ne", { column: 2, row: 1, columns: 2, rows: 2 }],
+      ["e", { column: 2, row: 2, columns: 2, rows: 2 }],
+      ["se", { column: 2, row: 2, columns: 2, rows: 2 }],
+      ["s", { column: 2, row: 2, columns: 2, rows: 2 }],
+      ["sw", { column: 1, row: 2, columns: 2, rows: 2 }],
+      ["w", { column: 1, row: 2, columns: 2, rows: 2 }],
+      ["nw", { column: 1, row: 1, columns: 2, rows: 2 }],
+    ];
+    for (const [direction, placement] of cases) {
+      expect(resizeGridPlacement(start, direction, 2, 2)).toEqual(placement);
+    }
+  });
+
+  it("rejects resize placements outside the 4×4 workspace", () => {
+    expect(resizeGridPlacement({ column: 1, row: 1, columns: 1, rows: 1 }, "nw", 2, 2)).toBeNull();
+    expect(resizeGridPlacement({ column: 4, row: 4, columns: 1, rows: 1 }, "se", 2, 2)).toBeNull();
+  });
+
+  it("detects overlapping grid placements but allows adjacent tiles", () => {
+    const tile = { column: 1, row: 1, columns: 2, rows: 2 };
+    expect(gridPlacementsOverlap(tile, { column: 2, row: 2, columns: 1, rows: 1 })).toBe(true);
+    expect(gridPlacementsOverlap(tile, { column: 3, row: 1, columns: 1, rows: 2 })).toBe(false);
   });
 
   it("swaps room positions and sizes while keeping each tile's occupied position", () => {

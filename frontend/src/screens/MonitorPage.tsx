@@ -13,7 +13,10 @@ import {
 import {
   FOLLOW_ROOM_DRAG_TYPE,
   fitRoomGrid,
+  gridPlacementsOverlap,
   packRoomGrid,
+  type GridPlacement,
+  type GridPosition,
   type MonitorRoom,
   type MonitorTileSize,
 } from "@/features/multiview/layout";
@@ -54,6 +57,9 @@ export function MonitorPage() {
   const [notice, setNotice] = useState("");
   const [dragOver, setDragOver] = useState(false);
   const [draggingRoom, setDraggingRoom] = useState(false);
+  const [gridSelection, setGridSelection] = useState<{ cells: number[]; valid: boolean } | null>(
+    null,
+  );
   const [globalAudioEnabled, setGlobalAudioEnabled] = useState(
     () => loadAppSettings().globalAudioEnabled,
   );
@@ -293,9 +299,9 @@ export function MonitorPage() {
     }
   };
 
-  const moveRoom = (fromKey: string, clientX: number, clientY: number) => {
+  const gridCellAtPoint = (clientX: number, clientY: number): GridPosition | null => {
     const gridElement = gridRef.current;
-    if (!gridElement) return;
+    if (!gridElement) return null;
     const rect = gridElement.getBoundingClientRect();
     const style = window.getComputedStyle(gridElement);
     const borderLeft = Number.parseFloat(style.borderLeftWidth) || 0;
@@ -353,9 +359,72 @@ export function MonitorPage() {
       row < 1 ||
       row > grid.rows
     ) {
+      return null;
+    }
+
+    return { column, row };
+  };
+
+  const updateGridSelection = (key: string, clientX: number, clientY: number) => {
+    const cell = gridCellAtPoint(clientX, clientY);
+    const room = rooms.find((item) => item.key === key);
+    const currentPlacement = placements?.get(key);
+    if (!cell || !room || !currentPlacement || !placements) {
+      setGridSelection(null);
       return;
     }
 
+    const target = rooms.find((item) => {
+      const placement = placements.get(item.key);
+      return (
+        placement &&
+        cell.column >= placement.column &&
+        cell.column < placement.column + placement.columns &&
+        cell.row >= placement.row &&
+        cell.row < placement.row + placement.rows
+      );
+    });
+
+    let candidate: GridPlacement;
+    let valid = true;
+    if (target?.key === key) {
+      candidate = currentPlacement;
+    } else if (target) {
+      const targetPlacement = placements.get(target.key);
+      if (!targetPlacement) return;
+      candidate = targetPlacement;
+    } else {
+      candidate = {
+        column: Math.min(cell.column, grid.columns - room.size.columns + 1),
+        row: Math.min(cell.row, grid.rows - room.size.rows + 1),
+        columns: room.size.columns,
+        rows: room.size.rows,
+      };
+      valid = ![...placements.entries()].some(
+        ([otherKey, placement]) => otherKey !== key && gridPlacementsOverlap(candidate, placement),
+      );
+    }
+
+    const cells = Array.from({ length: candidate.rows }, (_, rowOffset) =>
+      Array.from(
+        { length: candidate.columns },
+        (_, columnOffset) =>
+          (candidate.row + rowOffset - 1) * grid.columns + candidate.column + columnOffset - 1,
+      ),
+    ).flat();
+    setGridSelection((previous) =>
+      previous?.valid === valid &&
+      previous.cells.length === cells.length &&
+      previous.cells.every((selectedCell, index) => selectedCell === cells[index])
+        ? previous
+        : { cells, valid },
+    );
+  };
+
+  const moveRoom = (fromKey: string, clientX: number, clientY: number) => {
+    const cell = gridCellAtPoint(clientX, clientY);
+    if (!cell) return;
+    const { column, row } = cell;
     const from = rooms.find((room) => room.key === fromKey);
     const currentPlacements = packRoomGrid(rooms, grid);
     const fromPlacement = currentPlacements?.get(fromKey);
@@ -442,8 +511,19 @@ export function MonitorPage() {
     void toggleWindowFullscreen();
   };
 
-  const handleResize = (key: string, size: MonitorTileSize) => {
-    const nextRooms = rooms.map((room) => (room.key === key ? { ...room, size } : room));
+  const handleResize = (key: string, size: MonitorTileSize, position?: GridPosition) => {
+    if (position) {
+      const candidate = { ...position, ...size };
+      const overlaps = [...(placements?.entries() ?? [])].some(([otherKey, other]) => {
+        if (otherKey === key) return false;
+        return gridPlacementsOverlap(candidate, other);
+      });
+      if (overlaps) return;
+    }
+
+    const nextRooms = rooms.map((room) =>
+      room.key === key ? { ...room, size, ...(position ? { position } : {}) } : room,
+    );
     const nextGrid = fitRoomGrid(nextRooms, grid);
     if (!nextGrid) {
       showError("卡片尺寸与当前网格不兼容，请缩小卡片或扩大网格");
@@ -529,10 +609,6 @@ export function MonitorPage() {
         <div
           ref={gridRef}
           className={cn(styles.grid, dragOver && styles.dropActive)}
-          style={{
-            gridTemplateColumns: `repeat(${grid.columns}, minmax(0, 1fr))`,
-            gridTemplateRows: `repeat(${grid.rows}, minmax(180px, 1fr))`,
-          }}
           onDragOver={(event) => {
             event.preventDefault();
             event.dataTransfer.dropEffect = "copy";
@@ -585,16 +661,30 @@ export function MonitorPage() {
                 onQualityChange={(key, qualityId) => updateRoom(key, { qualityId })}
                 onRemove={removeRoom}
                 onMove={moveRoom}
-                onDraggingChange={(_key, dragging) => setDraggingRoom(dragging)}
+                onDraggingChange={(_key, dragging) => {
+                  setDraggingRoom(dragging);
+                  if (!dragging) setGridSelection(null);
+                }}
+                onDragPositionChange={updateGridSelection}
                 onResize={handleResize}
               />
             );
           })}
           {draggingRoom && (
             <div className={styles.gridGuideOverlay} aria-hidden="true">
-              {Array.from({ length: 16 }, (_, index) => (
-                <span key={index} />
-              ))}
+              {Array.from({ length: 16 }, (_, index) => {
+                const selected = gridSelection?.cells.includes(index) ?? false;
+                return (
+                  <span
+                    key={index}
+                    className={cn(
+                      styles.gridGuideCell,
+                      selected && styles.gridGuideSelected,
+                      selected && gridSelection && !gridSelection.valid && styles.gridGuideBlocked,
+                    )}
+                  />
+                );
+              })}
             </div>
           )}
         </div>

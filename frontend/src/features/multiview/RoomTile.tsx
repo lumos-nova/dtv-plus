@@ -25,13 +25,31 @@ import { VolumeSlider } from "@/features/player/VolumeSlider";
 import { useXgPlayer } from "@/features/player/useXgPlayer";
 import { cn } from "@/lib/cn";
 import { useToast } from "@/state/ToastProvider";
-import { type GridPlacement, type MonitorRoom, type MonitorTileSize } from "./layout";
+import {
+  resizeGridPlacement,
+  type GridPlacement,
+  type GridPosition,
+  type MonitorRoom,
+  type MonitorTileSize,
+  type ResizeDirection,
+} from "./layout";
 import styles from "./RoomTile.module.css";
 
 const MAX_MESSAGES = 120;
 const MESSAGE_FLUSH_MS = 150;
 const ROOM_DRAG_HOLD_MS = 220;
 let lastRoomDragEndedAt = 0;
+
+const RESIZE_HANDLES: { direction: ResizeDirection; className: string; label: string }[] = [
+  { direction: "n", className: styles.resizeNorth, label: "拖动调整卡片上边缘" },
+  { direction: "e", className: styles.resizeEast, label: "拖动调整卡片右边缘" },
+  { direction: "s", className: styles.resizeSouth, label: "拖动调整卡片下边缘" },
+  { direction: "w", className: styles.resizeWest, label: "拖动调整卡片左边缘" },
+  { direction: "nw", className: styles.resizeNorthWest, label: "拖动调整卡片左上角" },
+  { direction: "ne", className: styles.resizeNorthEast, label: "拖动调整卡片右上角" },
+  { direction: "se", className: styles.resizeSouthEast, label: "拖动调整卡片右下角" },
+  { direction: "sw", className: styles.resizeSouthWest, label: "拖动调整卡片左下角" },
+];
 
 interface RoomTileProps {
   room: MonitorRoom;
@@ -55,7 +73,8 @@ interface RoomTileProps {
   onRemove: (key: string) => void;
   onMove: (fromKey: string, clientX: number, clientY: number) => void;
   onDraggingChange: (key: string, dragging: boolean) => void;
-  onResize: (key: string, size: MonitorTileSize) => void;
+  onDragPositionChange: (key: string, clientX: number, clientY: number) => void;
+  onResize: (key: string, size: MonitorTileSize, position?: GridPosition) => void;
 }
 
 export function RoomTile({
@@ -80,17 +99,18 @@ export function RoomTile({
   onRemove,
   onMove,
   onDraggingChange,
+  onDragPositionChange,
   onResize,
 }: RoomTileProps) {
   const tileRef = useRef<HTMLElement>(null);
   const playerHostRef = useRef<HTMLDivElement>(null);
   const resizeGestureRef = useRef<{
     pointerId: number;
-    axis: "x" | "y" | "both";
+    direction: ResizeDirection;
     startX: number;
     startY: number;
-    startColumns: MonitorTileSize["columns"];
-    startRows: MonitorTileSize["rows"];
+    startPlacement: GridPlacement;
+    lastPlacement: GridPlacement;
     stepX: number;
     stepY: number;
   } | null>(null);
@@ -103,8 +123,12 @@ export function RoomTile({
   } | null>(null);
   const onMoveRef = useRef(onMove);
   onMoveRef.current = onMove;
+  const onResizeRef = useRef(onResize);
+  onResizeRef.current = onResize;
   const onDraggingChangeRef = useRef(onDraggingChange);
   onDraggingChangeRef.current = onDraggingChange;
+  const onDragPositionChangeRef = useRef(onDragPositionChange);
+  onDragPositionChangeRef.current = onDragPositionChange;
   const messageBufferRef = useRef<DanmakuMessage[]>([]);
   const blockKeywordsLowerRef = useRef(blockKeywordsLower);
   blockKeywordsLowerRef.current = blockKeywordsLower;
@@ -114,6 +138,7 @@ export function RoomTile({
   const [retryKey, setRetryKey] = useState(0);
   const [messages, setMessages] = useState<DanmakuMessage[]>([]);
   const [longPressDragging, setLongPressDragging] = useState(false);
+  const [resizing, setResizing] = useState(false);
   const [dropTarget, setDropTarget] = useState(false);
   const [moveOffset, setMoveOffset] = useState({ x: 0, y: 0 });
   const [danmakuPanelOpen, setDanmakuPanelOpen] = useState(false);
@@ -127,6 +152,56 @@ export function RoomTile({
         ?.closest<HTMLElement>("[data-monitor-room-key]");
 
     const onPointerMove = (event: globalThis.PointerEvent) => {
+      const resize = resizeGestureRef.current;
+      if (resize?.pointerId === event.pointerId) {
+        event.preventDefault();
+        const horizontalDelta = Math.round((event.clientX - resize.startX) / resize.stepX);
+        const verticalDelta = Math.round((event.clientY - resize.startY) / resize.stepY);
+        const horizontalFactor = resize.direction.includes("e")
+          ? 1
+          : resize.direction.includes("w")
+            ? -1
+            : 0;
+        const verticalFactor = resize.direction.includes("s")
+          ? 1
+          : resize.direction.includes("n")
+            ? -1
+            : 0;
+        const columns = Math.max(
+          1,
+          Math.min(4, resize.startPlacement.columns + horizontalDelta * horizontalFactor),
+        ) as MonitorTileSize["columns"];
+        const rows = Math.max(
+          1,
+          Math.min(4, resize.startPlacement.rows + verticalDelta * verticalFactor),
+        ) as MonitorTileSize["rows"];
+        const nextPlacement = resizeGridPlacement(
+          resize.startPlacement,
+          resize.direction,
+          columns,
+          rows,
+        );
+        if (!nextPlacement) return;
+        if (
+          nextPlacement.column === resize.lastPlacement.column &&
+          nextPlacement.row === resize.lastPlacement.row &&
+          nextPlacement.columns === resize.lastPlacement.columns &&
+          nextPlacement.rows === resize.lastPlacement.rows
+        ) {
+          return;
+        }
+        resize.lastPlacement = nextPlacement;
+        onResizeRef.current(
+          room.key,
+          {
+            columns: nextPlacement.columns as MonitorTileSize["columns"],
+            rows: nextPlacement.rows as MonitorTileSize["rows"],
+          },
+          { column: nextPlacement.column, row: nextPlacement.row },
+        );
+        return;
+      }
+
       const gesture = moveGestureRef.current;
       if (!gesture || gesture.pointerId !== event.pointerId) return;
       if (!gesture.active) {
@@ -140,11 +215,20 @@ export function RoomTile({
         x: event.clientX - gesture.startX,
         y: event.clientY - gesture.startY,
       });
+      onDragPositionChangeRef.current(room.key, event.clientX, event.clientY);
       const targetKey = tileAtPoint(event)?.dataset.monitorRoomKey;
       setDropTarget(Boolean(targetKey && targetKey !== room.key));
     };
 
     const onPointerEnd = (event: globalThis.PointerEvent) => {
+      const resize = resizeGestureRef.current;
+      if (resize?.pointerId === event.pointerId) {
+        resizeGestureRef.current = null;
+        setResizing(false);
+        onDraggingChangeRef.current(room.key, false);
+        return;
+      }
+
       const gesture = moveGestureRef.current;
       if (!gesture || gesture.pointerId !== event.pointerId) return;
       window.clearTimeout(gesture.timer);
@@ -159,9 +243,17 @@ export function RoomTile({
       onMoveRef.current(room.key, event.clientX, event.clientY);
     };
 
+    const onWindowBlur = () => {
+      if (!resizeGestureRef.current) return;
+      resizeGestureRef.current = null;
+      setResizing(false);
+      onDraggingChangeRef.current(room.key, false);
+    };
+
     window.addEventListener("pointermove", onPointerMove);
     window.addEventListener("pointerup", onPointerEnd);
     window.addEventListener("pointercancel", onPointerEnd);
+    window.addEventListener("blur", onWindowBlur);
     const onFullscreenChange = () =>
       setTileFullscreen(document.fullscreenElement === tileRef.current);
     document.addEventListener("fullscreenchange", onFullscreenChange);
@@ -169,10 +261,15 @@ export function RoomTile({
       window.removeEventListener("pointermove", onPointerMove);
       window.removeEventListener("pointerup", onPointerEnd);
       window.removeEventListener("pointercancel", onPointerEnd);
+      window.removeEventListener("blur", onWindowBlur);
       document.removeEventListener("fullscreenchange", onFullscreenChange);
       if (moveGestureRef.current) {
         window.clearTimeout(moveGestureRef.current.timer);
         if (moveGestureRef.current.active) onDraggingChangeRef.current(room.key, false);
+      }
+      if (resizeGestureRef.current) {
+        resizeGestureRef.current = null;
+        onDraggingChangeRef.current(room.key, false);
       }
     };
   }, [room.key]);
@@ -200,6 +297,7 @@ export function RoomTile({
       setMoveOffset({ x: 0, y: 0 });
       setLongPressDragging(true);
       onDraggingChangeRef.current(room.key, true);
+      onDragPositionChangeRef.current(room.key, gesture.startX, gesture.startY);
     }, ROOM_DRAG_HOLD_MS);
     moveGestureRef.current = gesture;
   };
@@ -236,62 +334,37 @@ export function RoomTile({
     muted: !focused || !soundEnabled,
   });
 
-  const beginResize = (event: PointerEvent<HTMLButtonElement>, axis: "x" | "y" | "both") => {
+  const beginResize = (event: PointerEvent<HTMLButtonElement>, direction: ResizeDirection) => {
+    if (event.button !== 0 || event.isPrimary === false) return;
     event.preventDefault();
     event.stopPropagation();
     const tile = tileRef.current;
-    if (!tile) return;
+    if (!tile || resizeGestureRef.current) return;
     const rect = tile.getBoundingClientRect();
     const computed = getComputedStyle(tile.parentElement ?? tile);
     const gapX = Number.parseFloat(computed.columnGap) || 0;
     const gapY = Number.parseFloat(computed.rowGap) || 0;
     const cellWidth = (rect.width - gapX * (placement.columns - 1)) / placement.columns;
     const cellHeight = (rect.height - gapY * (placement.rows - 1)) / placement.rows;
+    const startPlacement = {
+      column: placement.column,
+      row: placement.row,
+      columns: placement.columns,
+      rows: placement.rows,
+    };
     resizeGestureRef.current = {
       pointerId: event.pointerId,
-      axis,
+      direction,
       startX: event.clientX,
       startY: event.clientY,
-      startColumns: room.size.columns,
-      startRows: room.size.rows,
-      stepX: cellWidth + gapX,
-      stepY: cellHeight + gapY,
+      startPlacement,
+      lastPlacement: startPlacement,
+      stepX: Math.max(1, cellWidth + gapX),
+      stepY: Math.max(1, cellHeight + gapY),
     };
+    setResizing(true);
+    onDraggingChangeRef.current(room.key, true);
     event.currentTarget.setPointerCapture(event.pointerId);
-  };
-
-  const moveResize = (event: PointerEvent<HTMLButtonElement>) => {
-    const gesture = resizeGestureRef.current;
-    if (!gesture || gesture.pointerId !== event.pointerId) return;
-    const columns =
-      gesture.axis === "y"
-        ? gesture.startColumns
-        : (Math.max(
-            1,
-            Math.min(
-              4,
-              gesture.startColumns + Math.round((event.clientX - gesture.startX) / gesture.stepX),
-            ),
-          ) as MonitorTileSize["columns"]);
-    const rows =
-      gesture.axis === "x"
-        ? gesture.startRows
-        : (Math.max(
-            1,
-            Math.min(
-              4,
-              gesture.startRows + Math.round((event.clientY - gesture.startY) / gesture.stepY),
-            ),
-          ) as MonitorTileSize["rows"]);
-    if (columns !== room.size.columns || rows !== room.size.rows) {
-      onResize(room.key, { columns, rows });
-    }
-  };
-
-  const endResize = (event: PointerEvent<HTMLButtonElement>) => {
-    if (resizeGestureRef.current?.pointerId === event.pointerId) {
-      resizeGestureRef.current = null;
-    }
   };
 
   useEffect(() => {
@@ -383,6 +456,7 @@ export function RoomTile({
         focused && styles.audioFocused,
         player.state === "playing" && styles.playing,
         longPressDragging && styles.tileDragging,
+        resizing && styles.resizing,
         dropTarget && styles.tileDropTarget,
       )}
       data-monitor-room-key={room.key}
@@ -605,36 +679,16 @@ export function RoomTile({
             </button>
           </div>
         </footer>
-        <button
-          type="button"
-          className={cn(styles.resizeHandle, styles.resizeEast)}
-          onPointerDown={(event) => beginResize(event, "x")}
-          onPointerMove={moveResize}
-          onPointerUp={endResize}
-          onPointerCancel={endResize}
-          aria-label="拖动调整卡片宽度"
-          title="拖动调整宽度"
-        />
-        <button
-          type="button"
-          className={cn(styles.resizeHandle, styles.resizeSouth)}
-          onPointerDown={(event) => beginResize(event, "y")}
-          onPointerMove={moveResize}
-          onPointerUp={endResize}
-          onPointerCancel={endResize}
-          aria-label="拖动调整卡片高度"
-          title="拖动调整高度"
-        />
-        <button
-          type="button"
-          className={cn(styles.resizeHandle, styles.resizeCorner)}
-          onPointerDown={(event) => beginResize(event, "both")}
-          onPointerMove={moveResize}
-          onPointerUp={endResize}
-          onPointerCancel={endResize}
-          aria-label="拖动调整卡片宽度和高度"
-          title="拖动调整尺寸"
-        />
+        {RESIZE_HANDLES.map(({ direction, className, label }) => (
+          <button
+            key={direction}
+            type="button"
+            className={cn(styles.resizeHandle, className)}
+            onPointerDown={(event) => beginResize(event, direction)}
+            aria-label={label}
+            title={label}
+          />
+        ))}
       </div>
     </article>
   );

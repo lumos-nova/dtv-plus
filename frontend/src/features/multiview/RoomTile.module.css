@@ -2,7 +2,7 @@
   container-type: inline-size;
   position: relative;
   min-width: 0;
-  min-height: 160px;
+  min-height: 0;
   overflow: hidden;
   border: 1px solid rgba(255, 255, 255, 0.1);
   border-radius: 12px;
@@ -98,6 +98,12 @@
 .tile.playing:focus-within .header,
 .tile.playing:focus-within .footer,
 .tile.playing:focus-within .resizeHandle {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.tile.resizing .resizeHandle,
+.tile.playing:not(:hover):not(:focus-within).resizing .resizeHandle {
   opacity: 1;
   pointer-events: auto;
 }
@@ -340,57 +346,126 @@
   pointer-events: auto;
 }
 
-.resizeEast {
-  top: 38%;
-  right: 0;
-  width: 12px;
-  height: 24%;
-  min-height: 34px;
-  cursor: ew-resize;
+.resizeNorth,
+.resizeSouth {
+  right: 20px;
+  left: 20px;
+  height: 14px;
 }
 
-.resizeEast::after {
-  position: absolute;
-  inset: 20% 5px;
-  border-radius: 3px;
-  background: rgba(255, 255, 255, 0.62);
-  content: "";
+.resizeNorth {
+  top: 0;
+  cursor: ns-resize;
 }
 
 .resizeSouth {
   bottom: 0;
-  left: 38%;
-  width: 24%;
-  min-width: 34px;
-  height: 12px;
   cursor: ns-resize;
 }
 
+.resizeNorth::after,
 .resizeSouth::after {
   position: absolute;
-  inset: 5px 20%;
+  inset: 5px 35%;
   border-radius: 3px;
   background: rgba(255, 255, 255, 0.62);
   content: "";
 }
 
-.resizeCorner {
-  right: 0;
-  bottom: 0;
-  width: 18px;
-  height: 18px;
-  cursor: nwse-resize;
+.resizeEast,
+.resizeWest {
+  top: 20px;
+  bottom: 20px;
+  width: 14px;
 }
 
-.resizeCorner::after {
+.resizeEast {
+  right: 0;
+  cursor: ew-resize;
+}
+
+.resizeWest {
+  left: 0;
+  cursor: ew-resize;
+}
+
+.resizeEast::after,
+.resizeWest::after {
   position: absolute;
-  right: 4px;
-  bottom: 4px;
+  inset: 35% 5px;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.62);
+  content: "";
+}
+
+.resizeNorthWest,
+.resizeNorthEast,
+.resizeSouthEast,
+.resizeSouthWest {
+  width: 22px;
+  height: 22px;
+}
+
+.resizeNorthWest {
+  top: 0;
+  left: 0;
+  cursor: nw-resize;
+}
+
+.resizeNorthEast {
+  top: 0;
+  right: 0;
+  cursor: ne-resize;
+}
+
+.resizeSouthEast {
+  right: 0;
+  bottom: 0;
+  cursor: se-resize;
+}
+
+.resizeSouthWest {
+  bottom: 0;
+  left: 0;
+  cursor: sw-resize;
+}
+
+.resizeNorthWest::after,
+.resizeNorthEast::after,
+.resizeSouthEast::after,
+.resizeSouthWest::after {
+  position: absolute;
   width: 7px;
   height: 7px;
+  content: "";
+}
+
+.resizeNorthWest::after {
+  top: 4px;
+  left: 4px;
+  border-top: 2px solid rgba(255, 255, 255, 0.8);
+  border-left: 2px solid rgba(255, 255, 255, 0.8);
+}
+
+.resizeNorthEast::after {
+  top: 4px;
+  right: 4px;
+  border-top: 2px solid rgba(255, 255, 255, 0.8);
+  border-right: 2px solid rgba(255, 255, 255, 0.8);
+}
+
+.resizeSouthEast::after {
+  right: 4px;
+  bottom: 4px;
   border-right: 2px solid rgba(255, 255, 255, 0.8);
   border-bottom: 2px solid rgba(255, 255, 255, 0.8);
-  content: "";
+}
+
+.resizeSouthWest::after {
+  bottom: 4px;
+  left: 4px;
+  border-bottom: 2px solid rgba(255, 255, 255, 0.8);
+  border-left: 2px solid rgba(255, 255, 255, 0.8);
 }
 
 @container (max-width: 240px) {

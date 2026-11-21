@@ -40,10 +40,54 @@ export interface GridPlacement {
   rows: number;
 }
 
+export type ResizeDirection = "n" | "ne" | "e" | "se" | "s" | "sw" | "w" | "nw";
+
 const MAX_GRID_SIZE = 4;
 const MAX_ROOMS = 16;
 
 export const FOLLOW_ROOM_DRAG_TYPE = "application/x-dtv-follow-room";
+
+export function gridPlacementsOverlap(a: GridPlacement, b: GridPlacement): boolean {
+  return (
+    a.column < b.column + b.columns &&
+    a.column + a.columns > b.column &&
+    a.row < b.row + b.rows &&
+    a.row + a.rows > b.row
+  );
+}
+
+export function resizeGridPlacement(
+  placement: GridPlacement,
+  direction: ResizeDirection,
+  columns: number,
+  rows: number,
+): GridPlacement | null {
+  if (
+    !Number.isInteger(columns) ||
+    !Number.isInteger(rows) ||
+    columns < 1 ||
+    rows < 1 ||
+    columns > MAX_GRID_SIZE ||
+    rows > MAX_GRID_SIZE
+  ) {
+    return null;
+  }
+
+  const column = direction.includes("w")
+    ? placement.column + placement.columns - columns
+    : placement.column;
+  const row = direction.includes("n") ? placement.row + placement.rows - rows : placement.row;
+  if (
+    column < 1 ||
+    row < 1 ||
+    column + columns - 1 > MAX_GRID_SIZE ||
+    row + rows - 1 > MAX_GRID_SIZE
+  ) {
+    return null;
+  }
+
+  return { column, row, columns, rows };
+}
 
 export function swapRoomPositionsAndSizes(
   rooms: readonly MonitorRoom[],
@@ -224,7 +268,7 @@ export function normalizeMonitorWorkspace(raw: unknown): {
     });
   }
 
-  const validGrid = fitRoomGrid(rooms, { columns: 2, rows: 2 }) ?? { columns: 4, rows: 4 };
+  const validGrid = { columns: 4, rows: 4 } as const;
   const validKeys = new Set(rooms.map((room) => room.key));
   const rawAudioKeys = Array.isArray(source.audioFocusKeys) ? source.audioFocusKeys : [];
   const audioFocusKeys = [
