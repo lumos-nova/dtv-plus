@@ -1,0 +1,110 @@
+name: Windows Installer
+
+# Windows 发布流水线：push 形如 v4.1.0 的 tag 时自动构建安装包并发布到 Releases；
+# 也可以在 Actions 页面手动 Run workflow（仅产出 artifacts，不发 Release）。
+#
+# 产物（均为 per-user 安装、可选安装目录、未签名）：
+#   - DTV-<version>-amd64.msi        WiX v3 生成的 Windows Installer
+#   - DTV-<version>-amd64-setup.exe  NSIS 安装包，内置 WebView2 bootstrapper
+#
+# 未配置 Authenticode 证书：首次运行可能触发 SmartScreen 提示，
+# 选择「更多信息 → 仍要运行」即可；MSI 与 NSIS 都不要求管理员权限。
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: windows-installer-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Windows amd64
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26.x"
+          cache-dependency-path: go.sum
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+
+      - name: Install Wails3 CLI
+        shell: bash
+        run: |
+          go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+
+      - name: Install frontend deps
+        working-directory: frontend
+        run: pnpm install --frozen-lockfile
+
+      # 与本地验证一致的构建参数：不要加 -trimpath / -buildvcs=false / production tag
+      # （Wails v3.0.0 纯 Go WebView2 loader 对这些敏感，见 build/windows/Taskfile.yml 注释）
+      - name: Build app (unsigned)
+        run: wails3 build SIGN_ENABLED=false
+
+      - name: Download WiX v3
+        shell: pwsh
+        run: |
+          Invoke-WebRequest -Uri "https://github.com/wixtoolset/wix3/releases/download/wix3141rtm/wix314-binaries.zip" -OutFile "$env:RUNNER_TEMP\wix.zip"
+          Expand-Archive -Path "$env:RUNNER_TEMP\wix.zip" -DestinationPath "$env:RUNNER_TEMP\wix" -Force
+          "WIX_BIN=$env:RUNNER_TEMP\wix" >> $env:GITHUB_ENV
+
+      - name: Build MSI
+        run: wails3 task windows:msi WIX_BIN="${{ env.WIX_BIN }}"
+
+      - name: Install NSIS
+        run: choco install nsis -y --no-progress
+
+      - name: Add NSIS to PATH
+        shell: pwsh
+        run: '"C:\Program Files (x86)\NSIS" >> $env:GITHUB_PATH'
+
+      - name: Build NSIS installer (with WebView2 bootstrapper)
+        run: wails3 task windows:create:nsis:installer SIGN_ENABLED=false INSTALL_SCOPE=user
+
+      - name: Rename artifacts with version
+        shell: pwsh
+        run: |
+          $line = Get-Content build/config.yml | Select-String '^\s*version:\s*"([^"]+)"' | Select-Object -First 1
+          $version = $line.Matches[0].Groups[1].Value
+          if (-not $version) { throw "version not found in build/config.yml" }
+          Copy-Item bin/dtv-amd64.msi "bin/DTV-$version-amd64.msi"
+          Copy-Item bin/dtv-amd64-installer.exe "bin/DTV-$version-amd64-setup.exe"
+          "VERSION=$version" >> $env:GITHUB_ENV
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-installers
+          path: |
+            bin/DTV-*-amd64.msi
+            bin/DTV-*-amd64-setup.exe
+          if-no-files-found: error
+
+      - name: Publish Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            bin/DTV-*-amd64.msi
+            bin/DTV-*-amd64-setup.exe
+          generate_release_notes: true
+          fail_on_unmatched_files: true
