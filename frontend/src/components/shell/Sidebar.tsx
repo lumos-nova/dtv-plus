@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type CSSProperties, type PointerEvent } from "react";
+import { useEffect, useState, type CSSProperties } from "react";
 import { FollowsList } from "@/components/shell/FollowsList";
 import { cn } from "@/lib/cn";
 import { loadJSON, saveJSON } from "@/lib/storage";
@@ -6,9 +6,17 @@ import { useFollow } from "@/state/FollowProvider";
 import styles from "./Sidebar.module.css";
 
 const COLLAPSED_KEY = "dtv_sidebar_collapsed_v1";
-const WIDTH_KEY = "dtv_sidebar_width_v1";
-const DEFAULT_WIDTH = 224;
-const MIN_WIDTH = 200;
+
+/**
+ * 侧边栏固定宽度 = 筛选行（全部 / 在线 / 4 个平台）所有按钮加宽后的宽度总和：
+ *   6 × (32px × 4/3) = 256px  按钮（与 FollowsList.module.css .filterBtn 一致）
+ *   + 6px  filterBar 左右 padding(3×2)
+ *   + 2px  filterBar 左右 border(1×2)
+ *   + 16px .content 左右 padding(8×2)
+ *   + 1px  侧栏右描边
+ * = 281px，恰好让筛选行单行排满，不再支持拖拽改宽。
+ */
+const FIXED_WIDTH = (32 * 4 * 6) / 3 + 6 + 2 + 16 + 1;
 
 /**
  * 左侧栏。
@@ -24,27 +32,11 @@ export function Sidebar() {
   const [collapsed, setCollapsed] = useState<boolean>(() =>
     loadJSON<boolean>(COLLAPSED_KEY, false),
   );
-  const [width, setWidth] = useState(() => {
-    const saved = loadJSON<number>(WIDTH_KEY, DEFAULT_WIDTH);
-    return Number.isFinite(saved) ? Math.max(MIN_WIDTH, Math.min(480, saved)) : DEFAULT_WIDTH;
-  });
   const [userExpandedEmpty, setUserExpandedEmpty] = useState(false);
-  const resizeStartRef = useRef<{ pointerId: number; x: number; width: number } | null>(null);
 
   useEffect(() => {
     saveJSON(COLLAPSED_KEY, collapsed);
   }, [collapsed]);
-
-  useEffect(() => {
-    saveJSON(WIDTH_KEY, width);
-  }, [width]);
-
-  const resizeSidebar = (event: PointerEvent<HTMLButtonElement>) => {
-    const start = resizeStartRef.current;
-    if (!start || start.pointerId !== event.pointerId) return;
-    const maxWidth = Math.min(480, Math.floor(window.innerWidth * 0.42));
-    setWidth(Math.max(MIN_WIDTH, Math.min(maxWidth, start.width + event.clientX - start.x)));
-  };
 
   const autoCollapsed = follows.length === 0 && !userExpandedEmpty;
   const effectiveCollapsed = collapsed || autoCollapsed;
@@ -61,7 +53,7 @@ export function Sidebar() {
   return (
     <aside
       className={cn(styles.sidebar, effectiveCollapsed && styles.collapsed)}
-      style={{ "--sidebar-width": `${width}px` } as CSSProperties}
+      style={{ "--sidebar-width": `${FIXED_WIDTH}px` } as CSSProperties}
     >
       <div className={styles.body}>
         <FollowsList
@@ -76,32 +68,6 @@ export function Sidebar() {
           }}
         />
       </div>
-      {!effectiveCollapsed && (
-        <button
-          type="button"
-          className={styles.resizeHandle}
-          aria-label="拖动调整侧边栏宽度"
-          title="拖动调整侧边栏宽度"
-          onPointerDown={(event) => {
-            event.preventDefault();
-            resizeStartRef.current = {
-              pointerId: event.pointerId,
-              x: event.clientX,
-              width,
-            };
-            event.currentTarget.setPointerCapture(event.pointerId);
-          }}
-          onPointerMove={resizeSidebar}
-          onPointerUp={(event) => {
-            if (resizeStartRef.current?.pointerId === event.pointerId) {
-              resizeStartRef.current = null;
-            }
-          }}
-          onPointerCancel={() => {
-            resizeStartRef.current = null;
-          }}
-        />
-      )}
     </aside>
   );
 }

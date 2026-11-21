@@ -214,7 +214,9 @@
   display: flex;
   align-items: center;
   justify-content: flex-start;
+  flex-wrap: wrap;
   gap: 0;
+  row-gap: 3px;
   width: 100%;
   min-width: 0;
   min-height: 36px;
@@ -227,11 +229,12 @@
 
 .filterBtn {
   display: inline-flex;
-  flex: 0 0 32px;
+  /* 按钮宽度按需求加宽到原来的 4/3（32px → 42.67px） */
+  flex: 0 0 calc(32px * 4 / 3);
   align-items: center;
   justify-content: center;
-  width: 32px;
-  min-width: 32px;
+  width: calc(32px * 4 / 3);
+  min-width: calc(32px * 4 / 3);
   height: 30px;
   padding: 0 5px;
   border: 0;
@@ -256,19 +259,19 @@
 }
 
 .onlineFilter {
-  width: 32px;
-  min-width: 32px;
+  width: calc(32px * 4 / 3);
+  min-width: calc(32px * 4 / 3);
 }
 
 .platformFilter {
-  width: 32px;
-  min-width: 32px;
+  width: calc(32px * 4 / 3);
+  min-width: calc(32px * 4 / 3);
   padding: 0;
 }
 
 .allFilter {
-  width: 32px;
-  min-width: 32px;
+  width: calc(32px * 4 / 3);
+  min-width: calc(32px * 4 / 3);
   padding: 0;
 }
 

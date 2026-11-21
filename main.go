@@ -7,6 +7,7 @@ package main
 import (
 	"embed"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -18,6 +19,7 @@ import (
 
 	"dtv/internal/appdirs"
 	"dtv/internal/logging"
+	"dtv/internal/platforms/common"
 	"dtv/internal/platforms/douyu"
 	"dtv/internal/services"
 )
@@ -184,10 +186,31 @@ func main() {
 	// 必须一致，否则中继会用另一份客户端按游客档位重新取流。
 	douyuClient := douyu.NewClient()
 
-	app.RegisterService(application.NewService(services.NewDouyuService(emit, douyuClient)))
-	app.RegisterService(application.NewService(services.NewHuyaService(emit)))
-	app.RegisterService(application.NewService(services.NewDouyinService(emit)))
-	app.RegisterService(application.NewService(services.NewBilibiliService(emit)))
+	douyuService := services.NewDouyuService(emit, douyuClient)
+	huyaService := services.NewHuyaService(emit)
+	douyinService := services.NewDouyinService(emit)
+	bilibiliService := services.NewBilibiliService(emit)
+	app.RegisterService(application.NewService(douyuService))
+	app.RegisterService(application.NewService(huyaService))
+	app.RegisterService(application.NewService(douyinService))
+	app.RegisterService(application.NewService(bilibiliService))
+
+	// 独立录制：后端直接拉原流落盘，取流复用四个平台 Service（共享登录态）。
+	app.RegisterService(application.NewService(services.NewRecordingService(emit,
+		func(platform, roomID string) (*common.StreamInfo, error) {
+			switch platform {
+			case "douyu":
+				return douyuService.GetStreamInfo(roomID, "")
+			case "huya":
+				return huyaService.GetStreamInfo(roomID, "")
+			case "douyin":
+				return douyinService.GetStreamInfo(roomID, "")
+			case "bilibili":
+				return bilibiliService.GetStreamInfo(roomID, "")
+			default:
+				return nil, fmt.Errorf("不支持的平台：%s", platform)
+			}
+		})))
 
 	// 直播流中继：斗鱼直链 300 秒后会被 CDN 断开，由它在到期前续流。
 	app.RegisterService(application.NewService(services.NewStreamRelayService(douyuClient)))

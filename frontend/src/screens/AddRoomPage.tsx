@@ -36,12 +36,13 @@ export function AddRoomPage() {
     try {
       const info = await api.getRoomInfo(parsed.platform, parsed.roomId);
       setStreamer(info);
-      if (isFollowing(info.platform, info.id)) {
-        setNotice("该直播间已在关注列表中");
-      } else {
+      if (!isFollowing(info.platform, info.id)) {
         toggleFollow(info);
-        setNotice("已识别直播间并加入关注列表");
       }
+      // 识别并关注后直接在多房间工作台打开该直播间
+      navigate("/monitor", {
+        state: { dtvMonitorRoom: { platform: info.platform, roomId: info.id } },
+      });
     } catch (reason) {
       setError(
         reason instanceof Error
@@ -115,7 +116,16 @@ export function AddRoomPage() {
           <button
             type="button"
             className={styles.workspaceLink}
-            onClick={() => navigate("/monitor")}
+            onClick={() =>
+              navigate("/monitor", {
+                state: {
+                  dtvMonitorRoom: {
+                    platform: room.platform,
+                    roomId: streamer?.id ?? room.roomId,
+                  },
+                },
+              })
+            }
           >
             打开多房间工作台
             <ArrowRight size={14} />
@@ -124,7 +134,8 @@ export function AddRoomPage() {
       )}
 
       <p className={styles.hint}>
-        识别成功后会自动加入左侧关注列表；也可以将关注列表中的主播拖到多房间工作台直接播放。
+        识别成功后会自动加入左侧关注列表，并直接在多房间工作台打开播放；
+        也可以将关注列表中的主播拖到多房间工作台。
       </p>
     </section>
   );

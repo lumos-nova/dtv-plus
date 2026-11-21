@@ -1,8 +1,10 @@
 import { Check, Grid2X2 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type DragEvent } from "react";
+import { Events } from "@wailsio/runtime";
 import { LIVE_PLATFORMS, PLATFORM_LABEL, type LivePlatform } from "@/api";
 import { useLocation, useNavigate } from "react-router-dom";
 import { RoomTile } from "@/features/multiview/RoomTile";
+import { RecordingManagerModal } from "@/features/multiview/RecordingManagerModal";
 import { useDanmuBlock } from "@/features/player/useDanmuBlock";
 import {
   DEFAULT_DANMU_SETTINGS,
@@ -12,8 +14,10 @@ import {
 } from "@/features/player/danmuSettings";
 import {
   FOLLOW_ROOM_DRAG_TYPE,
+  findFreePlacement,
   fitRoomGrid,
   gridPlacementsOverlap,
+  moveRoomToCell,
   packRoomGrid,
   type GridPlacement,
   type GridPosition,
@@ -24,6 +28,7 @@ import { parseLiveRoomUrl } from "@/features/multiview/roomUrl";
 import { useMonitorWorkspace } from "@/features/multiview/useMonitorWorkspace";
 import { loadAppSettings, normalizeReplaySeconds } from "@/lib/appSettings";
 import { cn } from "@/lib/cn";
+import { useToast } from "@/state/ToastProvider";
 import {
   exitWindowFullscreen,
   isWailsRuntime,
@@ -53,7 +58,7 @@ export function MonitorPage() {
   const navigate = useNavigate();
   const { rooms, grid, audioFocusKeys, setWorkspace } = useMonitorWorkspace();
   const danmuBlock = useDanmuBlock();
-  const [error, setError] = useState("");
+  const { toast } = useToast();
   const [notice, setNotice] = useState("");
   const [dragOver, setDragOver] = useState(false);
   const [draggingRoom, setDraggingRoom] = useState(false);
@@ -67,36 +72,50 @@ export function MonitorPage() {
   const [replayEnabled, setReplayEnabled] = useState(() => loadAppSettings().replayEnabled);
   const [replaySeconds, setReplaySeconds] = useState(() => loadAppSettings().replaySeconds);
   const [windowFullscreenRoomKey, setWindowFullscreenRoomKey] = useState<string | null>(null);
-  const errorTimerRef = useRef<number | null>(null);
+  const [recordingManager, setRecordingManager] = useState<{
+    open: boolean;
+    preselect: string | null;
+  }>({ open: false, preselect: null });
   const gridRef = useRef<HTMLDivElement>(null);
   const previousAudioFocusRef = useRef<string[] | null>(null);
   const handledMonitorRequestRef = useRef<string | null>(null);
   const addRoomRef = useRef<(platform: LivePlatform, roomId: string) => void>(() => undefined);
   const placements = useMemo(() => packRoomGrid(rooms, grid), [grid, rooms]);
 
-  const showError = (message: string) => {
-    if (errorTimerRef.current !== null) window.clearTimeout(errorTimerRef.current);
-    setError(message);
-    errorTimerRef.current = window.setTimeout(() => {
-      errorTimerRef.current = null;
-      setError("");
-    }, 1_000);
-  };
-
-  const clearError = () => {
-    if (errorTimerRef.current !== null) {
-      window.clearTimeout(errorTimerRef.current);
-      errorTimerRef.current = null;
+  // 房间右键「独立录制…」→ 打开录制管理器并预勾选该房间；
+  // 后端录制异常 → 气泡通知（Wails 事件总线，录制不经过播放器）。
+  useEffect(() => {
+    const onOpenRecordingManager = (event: Event) => {
+      const detail = (event as CustomEvent<{ key?: string }>).detail;
+      setRecordingManager({ open: true, preselect: detail?.key ?? null });
+    };
+    window.addEventListener("dtv:open-recording-manager", onOpenRecordingManager);
+    let off: (() => void) | null = null;
+    if (isWailsRuntime()) {
+      off = Events.On(
+        "dtv:recording-error",
+        (ev: { data?: { message?: string; nickname?: string } }) => {
+          const detail = ev?.data;
+          if (!detail?.message) return;
+          toast(
+            `独立录制异常${detail.nickname ? `（${detail.nickname}）` : ""}：${detail.message}`,
+            "error",
+          );
+        },
+      );
     }
-    setError("");
+    return () => {
+      window.removeEventListener("dtv:open-recording-manager", onOpenRecordingManager);
+      off?.();
+    };
+  }, [toast]);
+
+  // 用户要求：右上角不再弹红色错误提示。保留调用点接口，静默忽略。
+  const showError = (message: string) => {
+    void message;
   };
 
-  useEffect(
-    () => () => {
-      if (errorTimerRef.current !== null) window.clearTimeout(errorTimerRef.current);
-    },
-    [],
-  );
+  const clearError = () => {};
 
   useEffect(() => {
     if (!notice) return;
@@ -172,11 +191,6 @@ export function MonitorPage() {
       if (previousAudioFocusRef.current) void exitWindowFullscreen();
       previousAudioFocusRef.current = null;
       setWindowFullscreenRoomKey(null);
-      if (errorTimerRef.current !== null) {
-        window.clearTimeout(errorTimerRef.current);
-        errorTimerRef.current = null;
-      }
-      setError("");
     };
     window.addEventListener("dtv:monitor-close-all", closeAllRooms);
     return () => window.removeEventListener("dtv:monitor-close-all", closeAllRooms);
@@ -236,9 +250,19 @@ export function MonitorPage() {
       setNotice("");
       return;
     }
+    // 新房间落在第一个空格，其余房间冻结在当前格，避免加房时整体重排。
+    const packed = packRoomGrid(nextRooms, nextGrid);
+    const positionedRooms = packed
+      ? nextRooms.map((room) => {
+          const placement = packed.get(room.key);
+          return placement
+            ? { ...room, position: { column: placement.column, row: placement.row } }
+            : room;
+        })
+      : nextRooms;
     setWorkspace((previous) => ({
       ...previous,
-      rooms: nextRooms,
+      rooms: positionedRooms,
       grid: nextGrid,
       audioFocusKeys: previous.rooms.length === 0 ? [key] : previous.audioFocusKeys,
     }));
@@ -438,78 +462,14 @@ export function MonitorPage() {
   const moveRoom = (fromKey: string, clientX: number, clientY: number) => {
     const cell = gridCellAtPoint(clientX, clientY);
     if (!cell) return;
-    const { column, row } = cell;
-    const from = rooms.find((room) => room.key === fromKey);
-    const currentPlacements = packRoomGrid(rooms, grid);
-    const fromPlacement = currentPlacements?.get(fromKey);
-    if (!from || !currentPlacements || !fromPlacement) return;
-    const target = rooms.find((room) => {
-      const placement = currentPlacements?.get(room.key);
-      return (
-        placement &&
-        column >= placement.column &&
-        column < placement.column + placement.columns &&
-        row >= placement.row &&
-        row < placement.row + placement.rows
-      );
-    });
-    if (target?.key === fromKey) return;
-
-    let nextRooms: MonitorRoom[];
-    if (target) {
-      const targetPlacement = currentPlacements?.get(target.key);
-      if (!targetPlacement) return;
-      nextRooms = rooms.map((room) => {
-        if (room.key === fromKey) {
-          return {
-            ...room,
-            position: { column: targetPlacement.column, row: targetPlacement.row },
-            size: target.size,
-          };
-        }
-        if (room.key === target.key) {
-          return {
-            ...room,
-            position: { column: fromPlacement.column, row: fromPlacement.row },
-            size: from.size,
-          };
-        }
-        return room;
-      });
-    } else {
-      const position = {
-        column: Math.min(column, grid.columns - from.size.columns + 1),
-        row: Math.min(row, grid.rows - from.size.rows + 1),
-      };
-      const overlapsRoom = rooms.some((room) => {
-        if (room.key === fromKey) return false;
-        const placement = currentPlacements.get(room.key);
-        return (
-          placement &&
-          position.column < placement.column + placement.columns &&
-          position.column + from.size.columns > placement.column &&
-          position.row < placement.row + placement.rows &&
-          position.row + from.size.rows > placement.row
-        );
-      });
-      if (overlapsRoom) {
-        showError("该位置无法容纳当前尺寸的直播间");
-        setNotice("");
-        return;
-      }
-      nextRooms = rooms.map((room) => (room.key === fromKey ? { ...room, position } : room));
-      const nextPlacement = packRoomGrid(nextRooms, grid)?.get(fromKey);
-      if (
-        !nextPlacement ||
-        nextPlacement.column !== position.column ||
-        nextPlacement.row !== position.row
-      ) {
-        showError("该位置无法容纳当前尺寸的直播间");
-        setNotice("");
-        return;
-      }
+    const result = moveRoomToCell(rooms, grid, fromKey, cell);
+    if ("error" in result) {
+      showError(result.error);
+      setNotice("");
+      return;
     }
-    setWorkspace((previous) => ({ ...previous, rooms: nextRooms }));
+    setWorkspace((previous) => ({ ...previous, rooms: result.rooms }));
+    clearError();
   };
 
   const toggleWindowFullscreenForRoom = (key: string) => {
@@ -526,18 +486,39 @@ export function MonitorPage() {
   };
 
   const handleResize = (key: string, size: MonitorTileSize, position?: GridPosition) => {
-    if (position) {
-      const candidate = { ...position, ...size };
-      const overlaps = [...(placements?.entries() ?? [])].some(([otherKey, other]) => {
+    const currentPlacements = packRoomGrid(rooms, grid);
+    if (!currentPlacements) {
+      showError("网格布局无效");
+      setNotice("");
+      return;
+    }
+    let nextPosition = position;
+    if (!nextPosition) {
+      // ctrl+滚轮：向任意有空间的方向扩（右/下被挡时向左/上等）。
+      const free = findFreePlacement(rooms, grid, key, size);
+      if (!free) {
+        showError("周围没有足够空间，请先移动卡片或缩小尺寸");
+        setNotice("");
+        return;
+      }
+      nextPosition = { column: free.column, row: free.row };
+    } else {
+      const candidate = { ...nextPosition, ...size };
+      const overlaps = [...currentPlacements.entries()].some(([otherKey, other]) => {
         if (otherKey === key) return false;
         return gridPlacementsOverlap(candidate, other);
       });
       if (overlaps) return;
     }
 
-    const nextRooms = rooms.map((room) =>
-      room.key === key ? { ...room, size, ...(position ? { position } : {}) } : room,
-    );
+    // 其余房间冻结在当前格，避免隐式重排把别的卡片挤走。
+    const nextRooms = rooms.map((room) => {
+      const placement = currentPlacements.get(room.key);
+      const frozen = placement
+        ? { ...room, position: { column: placement.column, row: placement.row } }
+        : room;
+      return room.key === key ? { ...frozen, size, position: nextPosition } : frozen;
+    });
     const nextGrid = fitRoomGrid(nextRooms, grid);
     if (!nextGrid) {
       showError("卡片尺寸与当前网格不兼容，请缩小卡片或扩大网格");
@@ -586,19 +567,12 @@ export function MonitorPage() {
 
   return (
     <section className={styles.page}>
-      {(error || notice) && (
+      {notice && (
         <div className={styles.feedback} aria-live="polite">
-          {error && (
-            <p className={styles.error} role="alert">
-              {error}
-            </p>
-          )}
-          {!error && notice && (
-            <p className={styles.notice}>
-              <Check size={13} />
-              {notice}
-            </p>
-          )}
+          <p className={styles.notice}>
+            <Check size={13} />
+            {notice}
+          </p>
         </div>
       )}
 
@@ -712,6 +686,13 @@ export function MonitorPage() {
             </div>
           )}
         </div>
+      )}
+      {recordingManager.open && (
+        <RecordingManagerModal
+          rooms={rooms}
+          preselectKey={recordingManager.preselect}
+          onClose={() => setRecordingManager({ open: false, preselect: null })}
+        />
       )}
     </section>
   );

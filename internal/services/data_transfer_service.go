@@ -5,7 +5,9 @@ import (
 	"encoding/base64"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	"dtv/internal/appdirs"
@@ -172,4 +174,74 @@ func (s *DataTransferService) SaveRecordingFile(encodedContent string, suggested
 		return nil, fmt.Errorf("写入录制文件失败：%w", err)
 	}
 	return &DataTransferFile{Name: filepath.Base(path), Path: path}, nil
+}
+
+// SaveRecordingToHighlights 把回溯精彩导出直接写入「精彩片段保存位置」，
+// 不弹保存对话框（弹窗里已有明确的保存目录）。同名时自动加序号。
+func (s *DataTransferService) SaveRecordingToHighlights(encodedContent string, suggestedName string) (*DataTransferFile, error) {
+	const maxRecordingBytes = 256 << 20
+	if len(encodedContent) > base64.StdEncoding.EncodedLen(maxRecordingBytes) {
+		return nil, fmt.Errorf("录制文件超过 256 MiB 限制")
+	}
+	content, err := base64.StdEncoding.DecodeString(encodedContent)
+	if err != nil {
+		return nil, fmt.Errorf("解码录制文件失败：%w", err)
+	}
+	if len(content) == 0 || len(content) > maxRecordingBytes {
+		return nil, fmt.Errorf("录制文件为空或超过 256 MiB 限制")
+	}
+	name := filepath.Base(strings.TrimSpace(suggestedName))
+	if name == "." || name == "" {
+		name = "dtv-highlight.mp4"
+	}
+	extension := strings.ToLower(filepath.Ext(name))
+	if extension != ".webm" && extension != ".mp4" && extension != ".gif" {
+		return nil, fmt.Errorf("不支持的录制文件类型")
+	}
+	dir := appdirs.RecordingsDir()
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return nil, fmt.Errorf("创建精彩片段目录失败：%w", err)
+	}
+	path := filepath.Join(dir, name)
+	stem := strings.TrimSuffix(name, filepath.Ext(name))
+	for index := 1; ; index++ {
+		if _, statErr := os.Stat(path); os.IsNotExist(statErr) {
+			break
+		}
+		path = filepath.Join(dir, fmt.Sprintf("%s-%d%s", stem, index, extension))
+		if index > 999 {
+			return nil, fmt.Errorf("精彩片段目录同名文件过多")
+		}
+	}
+	if err := os.WriteFile(path, content, 0o600); err != nil {
+		return nil, fmt.Errorf("写入精彩片段失败：%w", err)
+	}
+	return &DataTransferFile{Name: filepath.Base(path), Path: path}, nil
+}
+
+// CopyFileToClipboard 把导出的文件放进系统剪贴板（可直接粘贴到资源管理器）。
+//
+// 只允许操作精彩片段目录内的文件。Windows 用 PowerShell 的
+// Set-Clipboard -Path（CF_HDROP）；其他平台返回错误，前端回退为复制路径文本。
+func (s *DataTransferService) CopyFileToClipboard(path string) error {
+	cleaned := filepath.Clean(strings.TrimSpace(path))
+	if cleaned == "" || cleaned == "." {
+		return fmt.Errorf("文件路径为空")
+	}
+	rel, err := filepath.Rel(appdirs.RecordingsDir(), cleaned)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) {
+		return fmt.Errorf("只能复制精彩片段目录内的文件")
+	}
+	if info, statErr := os.Stat(cleaned); statErr != nil || info.IsDir() {
+		return fmt.Errorf("文件不存在")
+	}
+	if runtime.GOOS != "windows" {
+		return fmt.Errorf("当前平台暂不支持复制文件，请改用复制路径")
+	}
+	script := fmt.Sprintf("Set-Clipboard -Path '%s'", strings.ReplaceAll(cleaned, "'", "''"))
+	cmd := exec.Command("powershell", "-NoProfile", "-STA", "-Command", script)
+	if output, runErr := cmd.CombinedOutput(); runErr != nil {
+		return fmt.Errorf("复制文件失败：%s", strings.TrimSpace(string(output)))
+	}
+	return nil
 }

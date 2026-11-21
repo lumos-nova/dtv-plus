@@ -192,6 +192,148 @@ export function packRoomGrid(
   return placements;
 }
 
+/**
+ * 把每个房间的显式 position 冻结为当前打包结果。
+ *
+ * packRoomGrid 对「显式位置冲突」的房间会回退到自动打包，导致拖拽投放后
+ * 目标格可能被别的房间的回退占走、被拖房间弹回原位（引导绿了却投放失败）。
+ * 拖拽 / 缩放前先冻结所有房间的位置，之后的打包就完全是确定性的。
+ */
+export function freezeRoomPlacements(
+  rooms: readonly MonitorRoom[],
+  grid: MonitorGridSize,
+): MonitorRoom[] | null {
+  const placements = packRoomGrid(rooms, grid);
+  if (!placements) return null;
+  return rooms.map((room) => {
+    const placement = placements.get(room.key);
+    return placement
+      ? { ...room, position: { column: placement.column, row: placement.row } }
+      : room;
+  });
+}
+
+export type RoomMoveResult = { rooms: MonitorRoom[] } | { error: string };
+
+/**
+ * 拖拽投放的纯逻辑：投到别的房间上 → 交换位置与尺寸；
+ * 投到空格 → 精确落在该格（其余房间全部冻结，不再隐式重排）。
+ */
+export function moveRoomToCell(
+  rooms: readonly MonitorRoom[],
+  grid: MonitorGridSize,
+  fromKey: string,
+  cell: GridPosition,
+): RoomMoveResult {
+  const placements = packRoomGrid(rooms, grid);
+  const fromPlacement = placements?.get(fromKey);
+  const from = rooms.find((room) => room.key === fromKey);
+  if (!placements || !fromPlacement || !from) return { error: "网格布局无效" };
+
+  const frozen = freezeRoomPlacements(rooms, grid);
+  if (!frozen) return { error: "网格布局无效" };
+
+  const targetEntry = [...placements.entries()].find(
+    ([key, placement]) =>
+      key !== fromKey &&
+      cell.column >= placement.column &&
+      cell.column < placement.column + placement.columns &&
+      cell.row >= placement.row &&
+      cell.row < placement.row + placement.rows,
+  );
+
+  if (targetEntry) {
+    const [targetKey, targetPlacement] = targetEntry;
+    const targetRoom = rooms.find((room) => room.key === targetKey);
+    if (!targetRoom) return { error: "网格布局无效" };
+    return {
+      rooms: frozen.map((room) => {
+        if (room.key === fromKey) {
+          return {
+            ...room,
+            position: { column: targetPlacement.column, row: targetPlacement.row },
+            size: targetRoom.size,
+          };
+        }
+        if (room.key === targetKey) {
+          return {
+            ...room,
+            position: { column: fromPlacement.column, row: fromPlacement.row },
+            size: from.size,
+          };
+        }
+        return room;
+      }),
+    };
+  }
+
+  const position = {
+    column: Math.min(cell.column, grid.columns - from.size.columns + 1),
+    row: Math.min(cell.row, grid.rows - from.size.rows + 1),
+  };
+  const candidate = { ...position, ...from.size };
+  const overlaps = [...placements.entries()].some(
+    ([key, placement]) => key !== fromKey && gridPlacementsOverlap(candidate, placement),
+  );
+  if (overlaps) return { error: "该位置无法容纳当前尺寸的直播间" };
+  return {
+    rooms: frozen.map((room) => (room.key === fromKey ? { ...room, position } : room)),
+  };
+}
+
+/**
+ * 为调整尺寸后的房间找落点：枚举网格内所有能放下新尺寸的位置，
+ * 排除与其它房间重叠的，按「离当前锚点最近」排序——优先原地向右/下扩，
+ * 右/下被挡时向左/上或任意有空间的方向扩（ctrl+滚轮 / 拖拽缩放手柄共用）。
+ * 缩小时距离 0 的原锚点必然可用，因此保持原地。
+ */
+export function findFreePlacement(
+  rooms: readonly MonitorRoom[],
+  grid: MonitorGridSize,
+  key: string,
+  size: MonitorTileSize,
+): GridPlacement | null {
+  const placements = packRoomGrid(rooms, grid);
+  const current = placements?.get(key);
+  if (!placements || !current) return null;
+  const others = [...placements.entries()]
+    .filter(([otherKey]) => otherKey !== key)
+    .map(([, placement]) => placement);
+
+  const candidates: GridPlacement[] = [];
+  for (let row = 1; row + size.rows - 1 <= grid.rows; row += 1) {
+    for (let column = 1; column + size.columns - 1 <= grid.columns; column += 1) {
+      candidates.push({ column, row, columns: size.columns, rows: size.rows });
+    }
+  }
+  const distance = (placement: GridPlacement) =>
+    Math.abs(placement.column - current.column) + Math.abs(placement.row - current.row);
+  const columnsChanged = size.columns !== current.columns;
+  const rowsChanged = size.rows !== current.rows;
+  candidates.sort((a, b) => {
+    const diff = distance(a) - distance(b);
+    if (diff !== 0) return diff;
+    // 同距离：只改一个维度时优先沿该维度扩（保持另一维坐标不变），
+    // 例如只加宽 → 优先同行向左/右；只加高 → 优先同列向上/下。
+    const rowChangedA = a.row === current.row ? 0 : 1;
+    const rowChangedB = b.row === current.row ? 0 : 1;
+    const colChangedA = a.column === current.column ? 0 : 1;
+    const colChangedB = b.column === current.column ? 0 : 1;
+    const primaryA = rowsChanged && !columnsChanged ? colChangedA : rowChangedA;
+    const primaryB = rowsChanged && !columnsChanged ? colChangedB : rowChangedB;
+    if (primaryA !== primaryB) return primaryA - primaryB;
+    const secondaryA = rowsChanged && !columnsChanged ? rowChangedA : colChangedA;
+    const secondaryB = rowsChanged && !columnsChanged ? rowChangedB : colChangedB;
+    if (secondaryA !== secondaryB) return secondaryA - secondaryB;
+    return a.row - b.row || a.column - b.column;
+  });
+  return (
+    candidates.find(
+      (candidate) => !others.some((other) => gridPlacementsOverlap(candidate, other)),
+    ) ?? null
+  );
+}
+
 export function fitRoomGrid(
   rooms: readonly MonitorRoom[],
   preferred: MonitorGridSize,

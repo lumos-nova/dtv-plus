@@ -71,7 +71,7 @@ interface FollowContextValue {
   isFollowing: (platform: LivePlatform, id: string) => boolean;
   toggleFollow: (streamer: Streamer) => void;
   removeFollow: (platform: LivePlatform, id: string) => void;
-  createFolder: (name: string) => void;
+  createFolder: (name: string) => string | null;
   renameFolder: (folderId: string, name: string) => void;
   deleteFolder: (folderId: string) => void;
   toggleFolder: (folderId: string) => void;
@@ -612,9 +612,9 @@ export function FollowProvider({ children }: { children: ReactNode }) {
     [],
   );
 
-  const createFolder = useCallback((name: string) => {
+  const createFolder = useCallback((name: string): string | null => {
     const trimmed = name.trim();
-    if (!trimmed) return;
+    if (!trimmed) return null;
     const folder: FollowFolder = {
       id: newFolderId(),
       name: trimmed,
@@ -623,6 +623,8 @@ export function FollowProvider({ children }: { children: ReactNode }) {
     };
     // 新文件夹排在最前面（顶层主播永远显示在文件夹下方）
     setState((prev) => normalize({ ...prev, folders: [folder, ...prev.folders] }));
+    // 返回 id：调用方（如工作台右键「添加分组」）可以创建后立刻移入主播。
+    return folder.id;
   }, []);
 
   const renameFolder = useCallback((folderId: string, name: string) => {

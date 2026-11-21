@@ -31,6 +31,10 @@ applyStartupLanding();
 // 由这里统一补一条（见 lib/window.ts 的 installTitlebarDoubleClick）。
 installTitlebarDoubleClick();
 
+// 禁用 WebView2 原生右键菜单（返回 / 刷新 / 另存为 / 打印 / 检查）。
+// 自定义右键菜单（直播间卡片、关注列表等）是 DOM 元素，preventDefault 不影响它们。
+window.addEventListener("contextmenu", (event) => event.preventDefault());
+
 // P-02：图片代理不再阻塞首屏。
 // 代理启动需要一次 IPC + 一次本地 net.Listen；失败时 SmoothImage 会回退直连，
 // 所以先渲染、后台启动即可。浏览器预览没有 Go 侧，直接跳过。
