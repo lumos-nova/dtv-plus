@@ -127,6 +127,22 @@ export function SettingsModal({ onClose }: { onClose: () => void }) {
         </section>
 
         <section className={styles.section}>
+          <h3>开播提醒</h3>
+          <label className={styles.reminderToggle}>
+            <span>关注主播开播时弹出提醒</span>
+            <input
+              type="checkbox"
+              checked={settings.liveNotifyEnabled}
+              onChange={(event) => patch({ liveNotifyEnabled: event.target.checked })}
+            />
+          </label>
+          <p className={styles.hint}>
+            <BellRing size={14} />
+            每分钟检查一次关注列表；主播从下播变为开播（或开始轮播）时弹出提醒
+          </p>
+        </section>
+
+        <section className={styles.section}>
           <h3>直播回溯与本地存储</h3>
           <label className={styles.reminderToggle}>
             <span>开启直播回溯和保存功能</span>

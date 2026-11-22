@@ -341,6 +341,7 @@ func (c *Client) StreamInfo(roomID, line string) (*common.StreamInfo, error) {
 		Title:    title,
 		Nickname: uname,
 		IsLive:   bilibiliLiveStatus(liveStatus),
+		IsLoop:   liveStatus == 2,
 		Variants: []common.StreamVariant{},
 		Lines:    []common.LineOption{{ID: "auto", Label: "自动"}},
 	}
@@ -356,6 +357,7 @@ func (c *Client) StreamInfo(roomID, line string) (*common.StreamInfo, error) {
 		}
 		info.Avatar = roomData.Avatar
 		info.IsLive = bilibiliLiveStatus(roomData.LiveStatus)
+		info.IsLoop = roomData.LiveStatus == 2
 	}
 
 	if !info.IsLive {

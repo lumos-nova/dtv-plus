@@ -164,6 +164,7 @@ export const api: DtvApi = {
       viewers: 0,
       categoryName: "",
       isLive: info.isLive,
+      isLoop: info.isLoop,
     }));
   },
 

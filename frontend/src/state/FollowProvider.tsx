@@ -9,7 +9,10 @@ import {
   type ReactNode,
 } from "react";
 import { api, type LivePlatform, type Streamer } from "@/api";
+import { loadAppSettings } from "@/lib/appSettings";
 import { loadJSON, saveJSON, STORAGE_KEYS } from "@/lib/storage";
+import { liveTransitionKind, type LiveTransitionKind } from "./liveTransitions";
+import { useToast } from "./ToastProvider";
 
 /**
  * 关注列表 + 关注分组（文件夹）。
@@ -37,6 +40,8 @@ export interface FollowRecord {
   viewers: number;
   /** 关注时/最近一次刷新时的直播状态 */
   isLive: boolean;
+  /** 轮播中（todo02）：可播但为循环视频 */
+  isLoop?: boolean;
   followedAt: number;
 }
 
@@ -195,6 +200,8 @@ interface LegacyFollowedStreamer {
   roomTitle?: string;
   currentRoomId: string;
   liveStatus: "UNKNOWN" | "LIVE" | "OFFLINE";
+  /** todo02：轮播标记（老版忽略未知字段，向后兼容） */
+  isLoop?: boolean;
 }
 
 interface LegacyFollowFolder {
@@ -246,6 +253,7 @@ function parseFollow(raw: unknown): FollowRecord | null {
     avatar: String(raw.avatar ?? raw.avatarUrl ?? ""),
     viewers: toTimestamp(raw.viewers),
     isLive: raw.isLive === true || liveStatus === "LIVE",
+    isLoop: raw.isLoop === true,
     followedAt: toTimestamp(raw.followedAt),
   };
 }
@@ -290,6 +298,7 @@ function toLegacyFollow(record: FollowRecord): LegacyFollowedStreamer {
     roomTitle: record.title,
     currentRoomId: record.id,
     liveStatus: record.isLive ? "LIVE" : "OFFLINE",
+    isLoop: record.isLoop === true,
   };
 }
 
@@ -327,7 +336,7 @@ function toLegacyOrder(state: FollowState, records: Map<string, FollowRecord>): 
 function normalize(state: FollowState): FollowState {
   const follows = state.follows
     .filter((f) => f && f.platform && f.id)
-    .map((f) => ({ ...f, isLive: Boolean(f.isLive) }));
+    .map((f) => ({ ...f, isLive: Boolean(f.isLive), isLoop: Boolean(f.isLoop) }));
   const liveKeys = new Set(follows.map((f) => followKey(f.platform, f.id)));
 
   const usedKeys = new Set<string>();
@@ -599,6 +608,7 @@ export function FollowProvider({ children }: { children: ReactNode }) {
               avatar: streamer.avatar,
               viewers: streamer.viewers,
               isLive: streamer.isLive,
+              isLoop: streamer.isLoop,
               followedAt: Date.now(),
             },
             ...prev.follows,
@@ -724,6 +734,12 @@ export function FollowProvider({ children }: { children: ReactNode }) {
     });
   }, []);
 
+  // 开播提醒：首轮刷新只建立基线不提醒；之后"下播→开播/轮播"才弹提醒
+  const liveNotifyBaselineRef = useRef(false);
+  // 上一轮刷新失败的 key：失败会被写成"下播"，下一轮恢复时不能当成开播误报
+  const liveNotifyFailedRef = useRef<Set<string>>(new Set());
+  const { toast } = useToast();
+
   const refreshStatuses = useCallback(async (): Promise<FollowRefreshResult> => {
     // 自动刷新（启动 1.2s 后）与手动刷新共用一把闸门
     if (refreshingRef.current) {
@@ -735,6 +751,17 @@ export function FollowProvider({ children }: { children: ReactNode }) {
     refreshingRef.current = true;
     setRefreshing(true);
     setRefreshProgress({ done: 0, total: snapshot.length });
+
+    const notifyEnabled = loadAppSettings().liveNotifyEnabled;
+    const prevLive = new Map(
+      snapshot.map((record) => [
+        followKey(record.platform, record.id),
+        { isLive: record.isLive, isLoop: record.isLoop },
+      ]),
+    );
+    const transitions: { nickname: string; title: string; kind: LiveTransitionKind }[] = [];
+    const prevFailed = liveNotifyFailedRef.current;
+    const failedKeys = new Set<string>();
 
     const queue = [...snapshot];
     let updatedCount = 0;
@@ -758,6 +785,15 @@ export function FollowProvider({ children }: { children: ReactNode }) {
           ),
         }),
       );
+      const kind = liveTransitionKind(prevLive.get(key), patch);
+      if (kind && !prevFailed.has(key)) {
+        const record = snapshot.find((item) => followKey(item.platform, item.id) === key);
+        transitions.push({
+          nickname: patch.nickname || record?.nickname || key,
+          title: patch.title || record?.title || "",
+          kind,
+        });
+      }
     };
 
     try {
@@ -780,6 +816,7 @@ export function FollowProvider({ children }: { children: ReactNode }) {
                 avatar: info.avatar || record.avatar,
                 viewers: info.viewers || record.viewers,
                 isLive: info.isLive,
+                isLoop: info.isLoop,
               });
             } catch (primaryError) {
               // 轻量房间信息失败时退回取流信息接口再试一次（老项目也是逐个平台取详情）
@@ -795,9 +832,11 @@ export function FollowProvider({ children }: { children: ReactNode }) {
                   title: stream.title || record.title,
                   avatar: stream.avatar || record.avatar,
                   isLive: stream.isLive,
+                  isLoop: stream.isLoop,
                 });
               } catch (fallbackError) {
                 failedCount += 1;
+                failedKeys.add(key);
                 // 对齐老项目：刷新失败的直播间不要继续挂着"直播中"
                 applyPatch(key, { isLive: false });
                 console.warn(
@@ -812,6 +851,24 @@ export function FollowProvider({ children }: { children: ReactNode }) {
           }
         }),
       );
+      liveNotifyFailedRef.current = failedKeys;
+      if (!liveNotifyBaselineRef.current) {
+        liveNotifyBaselineRef.current = true;
+      } else if (notifyEnabled && transitions.length > 0) {
+        // Toast 视口最多同时显示 4 条：3 条明细 + 1 条汇总，避免互相挤掉
+        const shown = transitions.slice(0, 3);
+        for (const item of shown) {
+          toast(
+            item.kind === "loop"
+              ? `🎬 ${item.nickname} 开始轮播${item.title ? `：${item.title}` : ""}`
+              : `🔴 ${item.nickname} 开播了${item.title ? `：${item.title}` : ""}`,
+            "info",
+          );
+        }
+        if (transitions.length > shown.length) {
+          toast(`还有 ${transitions.length - shown.length} 位关注主播开播了`, "info");
+        }
+      }
     } finally {
       refreshingRef.current = false;
       setRefreshing(false);
@@ -823,7 +880,7 @@ export function FollowProvider({ children }: { children: ReactNode }) {
       `[follow-refresh] 成功 ${updatedCount}/${snapshot.length}，失败 ${failedCount}`,
     );
     return { total: snapshot.length, updated: updatedCount, failed: failedCount };
-  }, []);
+  }, [toast]);
 
   const refreshStatusesRef = useRef(refreshStatuses);
   refreshStatusesRef.current = refreshStatuses;
@@ -835,6 +892,16 @@ export function FollowProvider({ children }: { children: ReactNode }) {
     // 等首屏和 Wails IPC 都就绪后再刷新一次，避免启动瞬间请求全部失败
     const timer = window.setTimeout(() => void refreshStatusesRef.current(), 1200);
     return () => window.clearTimeout(timer);
+  }, []);
+
+  // 开播提醒轮询：每分钟刷新一次关注列表，跃迁时弹提醒（开关在设置里）
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      if (followsRef.current.length === 0) return;
+      if (!loadAppSettings().liveNotifyEnabled) return;
+      void refreshStatusesRef.current();
+    }, 60_000);
+    return () => window.clearInterval(timer);
   }, []);
 
   const value = useMemo<FollowContextValue>(

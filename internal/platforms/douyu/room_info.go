@@ -60,8 +60,10 @@ func (c *Client) FetchRoomDetail(roomID string) (*RoomDetail, error) {
 	showStatus := jsonInt64(room["show_status"])
 	videoLoop := jsonInt64(room["videoLoop"])
 	isLoop := jsonInt64(room["isLoop"])
-	detail.IsLive = isLiveFromFlags(showStatus, isLoop, videoLoop)
-	detail.VideoLoop = videoLoop == 1 || isLoop == 1
+	// todo02：轮播房间也要能播。IsLive 语义改为"可播放"（show_status==1，
+	// 含轮播），VideoLoop 单独标记轮播，供前端显示"轮播中"三态徽章。
+	detail.IsLive = showStatus == 1
+	detail.VideoLoop = (videoLoop == 1 || isLoop == 1) && showStatus == 1
 
 	return detail, nil
 }
@@ -82,6 +84,7 @@ func (c *Client) FetchRoomInfo(roomID string) (*common.Streamer, error) {
 		Avatar:       detail.Avatar,
 		CategoryName: detail.Category,
 		IsLive:       detail.IsLive,
+		IsLoop:       detail.VideoLoop,
 	}, nil
 }
 

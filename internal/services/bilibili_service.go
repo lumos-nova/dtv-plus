@@ -4,6 +4,7 @@ package services
 import (
 	"fmt"
 	"log"
+	"log/slog"
 	"strings"
 
 	"dtv/internal/platforms/bilibili"
@@ -95,7 +96,11 @@ func (s *BilibiliService) GetStreamInfo(roomID string, line string) (*common.Str
 	info, err := s.client.StreamInfo(roomID, strings.TrimSpace(line))
 	if err != nil {
 		log.Printf("[BilibiliService] 取流信息失败 room=%s line=%s: %v", roomID, line, err)
+		slog.Warn("B站取流信息失败", "room", roomID, "line", line, "error", err)
 		return nil, err
+	}
+	if info.IsLoop {
+		slog.Info("B站轮播房取流", "room", roomID, "variants", len(info.Variants))
 	}
 	return info, nil
 }

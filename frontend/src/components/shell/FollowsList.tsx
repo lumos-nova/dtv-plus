@@ -35,6 +35,8 @@ type StreamerMenuTarget = {
   record: FollowRecord;
   /** 该主播当前所在的文件夹（不在文件夹里时为 undefined） */
   folderId?: string;
+  /** todo02：Ctrl 多选后右键 → 批量操作菜单 */
+  batch?: boolean;
 };
 
 type FolderMenuTarget = { kind: "folder"; folderId: string };
@@ -102,6 +104,7 @@ export function FollowsList({
   const [dragOverKey, setDragOverKey] = useState<string | null>(null);
   const [platformFilter, setPlatformFilter] = useState<"ALL" | LivePlatform>("ALL");
   const [onlineOnly, setOnlineOnly] = useState(false);
+  const [selectedKeys, setSelectedKeys] = useState<Set<string>>(() => new Set());
   const [searchInput, setSearchInput] = useState("");
   const [searchKeyword, setSearchKeyword] = useState("");
   const [addRoomOpen, setAddRoomOpen] = useState(false);
@@ -239,11 +242,37 @@ export function FollowsList({
       setMenu({
         x: event.clientX,
         y: event.clientY,
-        target: { kind: "streamer", key, record, folderId: folderOf(key) },
+        target: {
+          kind: "streamer",
+          key,
+          record,
+          folderId: folderOf(key),
+          batch: selectedKeys.size > 1 && selectedKeys.has(key),
+        },
       });
     },
-    [folderOf],
+    [folderOf, selectedKeys],
   );
+
+  // todo02：Ctrl+左键多选主播；右键已选主播 → 批量取消关注。
+  const toggleSelected = useCallback((key: string) => {
+    setSelectedKeys((previous) => {
+      const next = new Set(previous);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }, []);
+
+  // 取关 / 刷新后清理已不存在的主播选中态
+  useEffect(() => {
+    setSelectedKeys((previous) => {
+      if (previous.size === 0) return previous;
+      const alive = new Set(follows.map((f) => followKey(f.platform, f.id)));
+      const next = new Set([...previous].filter((key) => alive.has(key)));
+      return next.size === previous.size ? previous : next;
+    });
+  }, [follows]);
 
   const openFolderMenu = useCallback((event: React.MouseEvent, folderId: string) => {
     event.preventDefault();
@@ -621,7 +650,7 @@ export function FollowsList({
     const sourceFolderId = opts.inFolderId ?? folderOf(key) ?? null;
     const compact = collapsed && !opts.forceExpanded;
     const draggable = !opts.plain;
-    const status = /轮播|循环|回放/.test(`${record.title} ${record.nickname}`)
+    const status = record.isLoop
       ? "轮播中"
       : record.isLive
         ? "直播中"
@@ -635,6 +664,7 @@ export function FollowsList({
             compact && styles.rowCompact,
             dragKey === key && styles.rowDragging,
             dragOverKey === key && styles.rowDragOver,
+            selectedKeys.has(key) && styles.rowSelected,
           )}
           draggable={draggable}
           onDragStart={draggable ? (e) => onRowDragStart(e, record, sourceFolderId) : undefined}
@@ -647,7 +677,15 @@ export function FollowsList({
               ? (event) => showListHover(opts.listId as string, event.currentTarget)
               : undefined
           }
-          onClick={() => (opts.plain ? openPlayer(record) : handleRowClick(record))}
+          onClick={(e) => {
+            if (e.ctrlKey || e.metaKey) {
+              e.preventDefault();
+              toggleSelected(key);
+              return;
+            }
+            if (opts.plain) openPlayer(record);
+            else handleRowClick(record);
+          }}
           onDoubleClick={opts.plain ? undefined : () => openMonitorRoom(record)}
           onContextMenu={(e) => openStreamerMenu(e, record)}
           role="button"
@@ -666,7 +704,7 @@ export function FollowsList({
             </span>
             <span
               className={cn(styles.liveDot, record.isLive ? styles.liveDotOn : styles.liveDotOff)}
-              title={record.isLive ? "正在直播" : "未开播"}
+              title={record.isLoop ? "轮播中" : record.isLive ? "正在直播" : "未开播"}
               aria-hidden="true"
             />
           </span>
@@ -1100,6 +1138,29 @@ export function FollowsList({
             onMouseDown={(e) => e.stopPropagation()}
           >
             {menuTarget.kind === "streamer" ? (
+              menuTarget.batch ? (
+                <>
+                  <p className={styles.menuLabel}>已选 {selectedKeys.size} 位主播</p>
+                  <button
+                    type="button"
+                    className={cn(styles.menuItem, styles.menuDanger)}
+                    onClick={() => {
+                      const keys = [...selectedKeys];
+                      for (const key of keys) {
+                        const idx = key.indexOf(":");
+                        if (idx <= 0) continue;
+                        removeFollow(key.slice(0, idx) as LivePlatform, key.slice(idx + 1));
+                      }
+                      setSelectedKeys(new Set());
+                      setMenu(null);
+                      toast(`已取消关注 ${keys.length} 位主播`, "success");
+                    }}
+                  >
+                    <X size={14} strokeWidth={2.4} />
+                    <span className={styles.menuText}>批量取消关注</span>
+                  </button>
+                </>
+              ) : (
               <>
                 {folders.length > 0 ? (
                   <>
@@ -1167,6 +1228,7 @@ export function FollowsList({
                   <span className={styles.menuText}>取消关注</span>
                 </button>
               </>
+              )
             ) : (
               <>
                 <button

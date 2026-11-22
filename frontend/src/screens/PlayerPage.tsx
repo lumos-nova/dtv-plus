@@ -883,7 +883,7 @@ export function PlayerPage() {
                           info.isLive ? styles.statusLive : styles.statusOff,
                         )}
                       >
-                        {info.isLive ? "直播中" : "未开播"}
+                        {info.isLoop ? "轮播中" : info.isLive ? "直播中" : "未开播"}
                       </span>
                       <button
                         type="button"
@@ -899,6 +899,7 @@ export function PlayerPage() {
                             viewers: 0,
                             categoryName: "",
                             isLive: info.isLive,
+                            isLoop: info.isLoop,
                           })
                         }
                       >

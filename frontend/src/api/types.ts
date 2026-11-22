@@ -59,6 +59,8 @@ export interface Streamer {
   viewers: number;
   categoryName: string;
   isLive: boolean;
+  /** 轮播中：可播但内容是循环视频（todo02 三态徽章用） */
+  isLoop?: boolean;
 }
 
 /**
@@ -84,6 +86,8 @@ export interface StreamInfo {
   nickname: string;
   avatar: string;
   isLive: boolean;
+  /** 轮播中：可播但内容是循环视频 */
+  isLoop?: boolean;
   /** 可切换的清晰度，按从高到低排列 */
   variants: StreamVariant[];
   /** 可切换的线路，单线路时为空数组（不显示线路选择） */

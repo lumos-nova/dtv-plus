@@ -1,5 +1,5 @@
 import { X } from "lucide-react";
-import { useCallback, useEffect, useRef, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { cn } from "@/lib/cn";
 import styles from "./Modal.module.css";
@@ -39,6 +39,56 @@ export function Modal({
 }: ModalProps) {
   const panelRef = useRef<HTMLDivElement | null>(null);
   const restoreRef = useRef<HTMLElement | null>(null);
+  // todo02：标题栏拖动弹窗（设置 / 存储设置等所有共用 Modal 的弹窗均生效）
+  const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 });
+  const [dragging, setDragging] = useState(false);
+  const dragRef = useRef<{
+    pointerId: number;
+    startX: number;
+    startY: number;
+    baseX: number;
+    baseY: number;
+    rect: DOMRect;
+  } | null>(null);
+
+  const onHeaderPointerDown = useCallback(
+    (event: React.PointerEvent<HTMLDivElement>) => {
+      if (event.button !== 0) return;
+      if ((event.target as Element).closest("button")) return;
+      const panel = panelRef.current;
+      if (!panel) return;
+      dragRef.current = {
+        pointerId: event.pointerId,
+        startX: event.clientX,
+        startY: event.clientY,
+        baseX: dragOffset.x,
+        baseY: dragOffset.y,
+        rect: panel.getBoundingClientRect(),
+      };
+      event.currentTarget.setPointerCapture(event.pointerId);
+      setDragging(true);
+    },
+    [dragOffset],
+  );
+
+  const onHeaderPointerMove = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+    const drag = dragRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    // 限制平移范围：弹窗整体保持在视口内（至少留 8px 可见）
+    const minDx = 8 - drag.rect.left;
+    const maxDx = window.innerWidth - 8 - drag.rect.right;
+    const minDy = 8 - drag.rect.top;
+    const maxDy = window.innerHeight - 8 - drag.rect.bottom;
+    const dx = Math.min(maxDx, Math.max(minDx, event.clientX - drag.startX));
+    const dy = Math.min(maxDy, Math.max(minDy, event.clientY - drag.startY));
+    setDragOffset({ x: drag.baseX + dx, y: drag.baseY + dy });
+  }, []);
+
+  const onHeaderPointerUp = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+    if (dragRef.current?.pointerId !== event.pointerId) return;
+    dragRef.current = null;
+    setDragging(false);
+  }, []);
 
   const onKeyDown = useCallback(
     (event: React.KeyboardEvent<HTMLDivElement>) => {
@@ -98,7 +148,13 @@ export function Modal({
       <div
         ref={panelRef}
         className={cn(styles.panel, className)}
-        style={{ width: `min(${width}px, calc(100vw - 40px))` }}
+        style={{
+          width: `min(${width}px, calc(100vw - 40px))`,
+          transform:
+            dragOffset.x !== 0 || dragOffset.y !== 0
+              ? `translate(${dragOffset.x}px, ${dragOffset.y}px)`
+              : undefined,
+        }}
         role="dialog"
         aria-modal="true"
         aria-label={labelId ? undefined : title}
@@ -106,7 +162,13 @@ export function Modal({
         tabIndex={-1}
         onKeyDown={onKeyDown}
       >
-        <header className={styles.header}>
+        <header
+          className={cn(styles.header, dragging && styles.headerDragging)}
+          onPointerDown={onHeaderPointerDown}
+          onPointerMove={onHeaderPointerMove}
+          onPointerUp={onHeaderPointerUp}
+          onPointerCancel={onHeaderPointerUp}
+        >
           <h2 className={styles.title} id={labelId}>
             {title}
           </h2>

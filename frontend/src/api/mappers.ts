@@ -67,6 +67,7 @@ export function mapStreamer(raw: Models.Streamer, platform: LivePlatform): Strea
     viewers: raw.viewers,
     categoryName: raw.categoryName,
     isLive: raw.isLive,
+    isLoop: raw.isLoop ?? false,
   };
 }
 
@@ -108,6 +109,7 @@ export function mapStreamInfo(raw: Models.StreamInfo, platform: LivePlatform): S
     nickname: raw.nickname,
     avatar: raw.avatar,
     isLive: raw.isLive,
+    isLoop: raw.isLoop ?? false,
     variants: (raw.variants ?? []).map(mapVariant),
     lines: (raw.lines ?? []).map(mapLine),
   };

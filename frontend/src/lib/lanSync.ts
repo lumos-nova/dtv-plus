@@ -86,6 +86,8 @@ interface FollowRecord {
   avatar: string;
   viewers: number;
   isLive: boolean;
+  /** todo02：轮播标记（同步 payload 可选字段） */
+  isLoop?: boolean;
   followedAt: number;
 }
 
@@ -169,6 +171,7 @@ function normalizeFollowRecord(raw: unknown): FollowRecord | null {
     avatar: normalizeImageSource(toStringValue(raw.avatar) || toStringValue(raw.avatarUrl)),
     viewers: toNumber(raw.viewers),
     isLive: raw.isLive === true || raw.liveStatus === "LIVE" || raw.showStatus === 1,
+    isLoop: raw.isLoop === true,
     followedAt: toNumber(raw.followedAt),
   };
 }

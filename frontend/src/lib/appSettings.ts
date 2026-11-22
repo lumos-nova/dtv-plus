@@ -18,6 +18,8 @@ export interface AppSettings {
   restReminderEnabled: boolean;
   restMinutes: number;
   watchedSeconds: number;
+  /** 开播提醒：关注主播从下播变为开播/轮播时弹出提醒 */
+  liveNotifyEnabled: boolean;
 }
 
 const KEY = "dtv_app_settings_v1";
@@ -39,6 +41,8 @@ export function loadAppSettings(): AppSettings {
         ? Math.max(1, Math.min(1440, Math.round(raw.restMinutes)))
         : 60,
     watchedSeconds: typeof raw?.watchedSeconds === "number" ? Math.max(0, raw.watchedSeconds) : 0,
+    liveNotifyEnabled:
+      typeof raw?.liveNotifyEnabled === "boolean" ? raw.liveNotifyEnabled : true,
   };
 }
 
@@ -52,5 +56,6 @@ export function saveAppSettings(settings: AppSettings) {
     restReminderEnabled: settings.restReminderEnabled,
     restMinutes: settings.restMinutes,
     watchedSeconds: settings.watchedSeconds,
+    liveNotifyEnabled: settings.liveNotifyEnabled,
   });
 }
