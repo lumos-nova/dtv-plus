@@ -60,9 +60,19 @@
 
 ## 安装方式
 
-可以在 [release](https://github.com/chen-zeong/DTV/releases) 目录下载对应系统的安装包, 也可以通过源码编译安装
+可以在 [Releases](https://github.com/lumos-nova/dtv-plus/releases) 下载对应系统的安装包，也可以通过源码编译安装。
 
-Windows MSI 与 NSIS 安装包均可选择应用安装目录；缓存、日志和录制目录可在应用设置中单独配置。
+Windows（amd64）提供两种安装包，均为 per-user 安装、无需管理员权限、可自选安装目录：
+
+| 资产 | 说明 |
+| ---- | ---- |
+| `DTV-<版本>-amd64-setup.exe` | NSIS 安装包，**内置 WebView2 bootstrapper**，缺运行时会自动安装（推荐） |
+| `DTV-<版本>-amd64.msi` | Windows Installer（WiX v3），适合批量部署；需系统已有 WebView2 运行时 |
+
+安装包未做 Authenticode 签名：首次运行若出现 SmartScreen 提示，选择「更多信息 → 仍要运行」即可。
+缓存、日志和录制目录可在应用设置中单独配置。
+
+macOS 提供 arm64 / Intel 两个 DMG（见 Releases）。
 
 ## 编译
 
