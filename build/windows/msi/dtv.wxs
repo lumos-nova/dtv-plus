@@ -29,7 +29,7 @@
     <Property Id="ARPPRODUCTICON" Value="AppIcon" />
     <Property Id="ARPCONTACT" Value="DTV" />
     <Property Id="ARPCOMMENTS" Value="DTV live streaming client" />
-    <Property Id="ARPURLINFOABOUT" Value="https://github.com/c-zeong/DTV" />
+    <Property Id="ARPURLINFOABOUT" Value="https://github.com/lumos-nova/dtv-plus" />
     <Property Id="WIXUI_INSTALLDIR" Value="INSTALLFOLDER" />
 
     <Directory Id="TARGETDIR" Name="SourceDir">

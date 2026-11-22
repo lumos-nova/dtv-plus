@@ -5,13 +5,13 @@ version: '3'
 
 # This information is used to generate the build assets.
 info:
-  companyName: "DTV" # The name of the company
-  productName: "DTV" # The name of the application
-  productIdentifier: "com.dtv.app" # The unique product identifier
-  description: "DTV — 直播聚合客户端" # The application description
+  companyName: "DTV-PLUS" # The name of the company
+  productName: "DTV-PLUS" # The name of the application
+  productIdentifier: "com.dtv-plus.app" # The unique product identifier
+  description: "DTV-PLUS — 直播聚合客户端" # The application description
   copyright: "(c) 2026, DTV" # Copyright text
-  comments: "https://github.com/c-zeong/DTV" # Comments
-  version: "4.1.0" # The application version
+  comments: "https://github.com/lumos-nova/dtv-plus" # Comments
+  version: "1.0.0" # The application version
   # cfBundleIconName: "appicon" # The macOS icon name in Assets.car icon bundles (optional)
   #                               # Should match the name of your .icon file without the extension
   #                               # If not set and Assets.car exists, defaults to "appicon"
