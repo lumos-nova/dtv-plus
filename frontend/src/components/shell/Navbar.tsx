@@ -86,7 +86,7 @@ export function Navbar() {
             <button
               type="button"
               className={cn(styles.iconBtn, styles.noDrag)}
-              onClick={() => openExternalURL("https://github.com/chen-zeong/DTV")}
+              onClick={() => openExternalURL("https://github.com/lumos-nova/dtv-plus")}
               aria-label="打开 GitHub 项目"
               title="GitHub 项目"
             >

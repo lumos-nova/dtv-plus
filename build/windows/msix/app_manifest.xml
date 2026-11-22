@@ -14,7 +14,7 @@
     ProcessorArchitecture="x64" />
   
   <Properties>
-    <DisplayName>My Product</DisplayName>
+    <DisplayName>DTV-PLUS</DisplayName>
     <PublisherDisplayName>My Company</PublisherDisplayName>
     <Description>A dtv application</Description>
     <Logo>Assets\StoreLogo.png</Logo>
@@ -31,7 +31,7 @@
   <Applications>
     <Application Id="com.example.dtv" Executable="dtv.exe" EntryPoint="Windows.FullTrustApplication">
       <uap:VisualElements
-        DisplayName="My Product"
+        DisplayName="DTV-PLUS"
         Description="A dtv application"
         BackgroundColor="transparent"
         Square150x150Logo="Assets\Square150x150Logo.png"
