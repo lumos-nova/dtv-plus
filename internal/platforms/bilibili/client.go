@@ -27,7 +27,14 @@ const (
 	urlRoomGetInfo  = "https://api.live.bilibili.com/room/v1/Room/get_info"
 	urlRoomInfo     = "https://api.live.bilibili.com/xlive/web-room/v1/index/getInfoByRoom"
 	urlRoomPlayInfo = "https://api.live.bilibili.com/xlive/web-room/v2/index/getRoomPlayInfo"
-	urlDanmuInfo    = "https://api.live.bilibili.com/xlive/web-room/v1/index/getDanmuInfo"
+	// v1 playUrl：轮播房（live_status==2）在 v2 getRoomPlayInfo 里 playurl_info
+	// 恒为 null，只有这个旧接口还下发轮播流地址（platform=h5 给 HLS）。
+	urlRoomPlayURL = "https://api.live.bilibili.com/xlive/web-room/v1/playUrl/playUrl"
+	// 轮播房实际按"点播"播放：getRoundPlayVideo 给当前轮到的稿件（bvid/cid/
+	// play_time），再用主站 x/player/playurl 取整段 MP4（见 round_play.go）。
+	urlRoundPlayVideo = "https://api.live.bilibili.com/live/getRoundPlayVideo"
+	urlVODPlayURL     = "https://api.bilibili.com/x/player/playurl"
+	urlDanmuInfo      = "https://api.live.bilibili.com/xlive/web-room/v1/index/getDanmuInfo"
 	urlWbiNav       = "https://api.bilibili.com/x/web-interface/nav"
 	urlFingerSPI    = "https://api.bilibili.com/x/frontend/finger/spi"
 	urlSearchType   = "https://api.bilibili.com/x/web-interface/search/type"

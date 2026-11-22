@@ -76,8 +76,8 @@ export function Navbar() {
                 type="button"
                 className={cn(styles.iconBtn, styles.noDrag)}
                 onClick={() => window.dispatchEvent(new Event("dtv:monitor-close-all"))}
-                aria-label="关闭所有直播间"
-                title="关闭所有直播间"
+                aria-label="关闭直播间（Ctrl 多选时仅关闭选中）"
+                title="关闭直播间（Ctrl 多选时仅关闭选中）"
               >
                 <VideoOff size={18} strokeWidth={2} />
               </button>
@@ -86,7 +86,7 @@ export function Navbar() {
             <button
               type="button"
               className={cn(styles.iconBtn, styles.noDrag)}
-              onClick={() => openExternalURL("https://github.com/chen-zeong/DTV")}
+              onClick={() => openExternalURL("https://github.com/lumos-nova/dtv-plus")}
               aria-label="打开 GitHub 项目"
               title="GitHub 项目"
             >

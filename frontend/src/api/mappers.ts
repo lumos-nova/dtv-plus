@@ -67,6 +67,7 @@ export function mapStreamer(raw: Models.Streamer, platform: LivePlatform): Strea
     viewers: raw.viewers,
     categoryName: raw.categoryName,
     isLive: raw.isLive,
+    isLoop: raw.isLoop ?? false,
   };
 }
 
@@ -87,8 +88,8 @@ export function mapVariant(raw: Models.StreamVariant): StreamVariant {
     id: raw.id,
     label: raw.label,
     url: raw.url,
-    // 后端只会给 flv/hls 之一，这里收敛成联合类型
-    format: raw.format === "hls" ? "hls" : "flv",
+    // 后端只会给 flv/hls/mp4 之一，这里收敛成联合类型
+    format: raw.format === "hls" ? "hls" : raw.format === "mp4" ? "mp4" : "flv",
     // 斗鱼同一实际档位可能有多个 CDN 地址；旧后端没有 urls 时退回单地址。
     urls: raw.urls && raw.urls.length > 0 ? raw.urls : [raw.url],
     appliedRate: raw.appliedRate ?? null,
@@ -108,6 +109,7 @@ export function mapStreamInfo(raw: Models.StreamInfo, platform: LivePlatform): S
     nickname: raw.nickname,
     avatar: raw.avatar,
     isLive: raw.isLive,
+    isLoop: raw.isLoop ?? false,
     variants: (raw.variants ?? []).map(mapVariant),
     lines: (raw.lines ?? []).map(mapLine),
   };

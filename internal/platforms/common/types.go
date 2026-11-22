@@ -40,6 +40,9 @@ type Streamer struct {
 	Viewers      int64  `json:"viewers"`
 	CategoryName string `json:"categoryName"`
 	IsLive       bool   `json:"isLive"`
+	// IsLoop 表示"轮播中"：房间可播但内容是循环视频而非真人直播。
+	// IsLive 语义为"可播放"（直播或轮播），前端用 IsLoop 区分三态徽章。
+	IsLoop bool `json:"isLoop"`
 }
 
 // StreamerPage 一页主播卡片 + 分页信息。
@@ -89,6 +92,7 @@ type StreamInfo struct {
 	Nickname string          `json:"nickname"`
 	Avatar   string          `json:"avatar"`
 	IsLive   bool            `json:"isLive"`
+	IsLoop   bool            `json:"isLoop"`
 	Variants []StreamVariant `json:"variants"`
 	Lines    []LineOption    `json:"lines"`
 }

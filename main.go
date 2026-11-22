@@ -1,4 +1,4 @@
-// DTV — 直播聚合客户端（Wails v3 版）
+// DTV-PLUS— 直播聚合客户端（Wails v3 版）
 //
 // 当前阶段：斗鱼 / 虎牙 / 抖音 / B 站 四个平台都已全量接入
 // （分区、列表、房间、搜索、取流、弹幕全部走真实后端）。
@@ -98,8 +98,8 @@ func main() {
 	var saveMu sync.Mutex
 
 	app := application.New(application.Options{
-		Name:        "DTV",
-		Description: "DTV — 直播聚合客户端",
+		Name:        "DTV-PLUS",
+		Description: "DTV-PLUS — 直播聚合客户端",
 		Assets: application.AssetOptions{
 			Handler: application.AssetFileServerFS(assets),
 		},

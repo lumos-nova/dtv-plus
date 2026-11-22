@@ -17,7 +17,7 @@
         <key>CFBundleShortVersionString</key>
             <string>4.0.0</string>
         <key>CFBundleGetInfoString</key>
-            <string>DTV — 直播聚合客户端（开发版）</string>
+            <string>DTV-PLUS — 直播聚合客户端（开发版）</string>
         <key>CFBundleIconFile</key>
             <string>icons</string>
         <key>CFBundleIconName</key>

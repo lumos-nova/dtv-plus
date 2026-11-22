@@ -1,5 +1,5 @@
 import { Check, Grid2X2 } from "lucide-react";
-import { useEffect, useMemo, useRef, useState, type DragEvent } from "react";
+import { useEffect, useCallback, useMemo, useRef, useState, type DragEvent } from "react";
 import { Events } from "@wailsio/runtime";
 import { LIVE_PLATFORMS, PLATFORM_LABEL, type LivePlatform } from "@/api";
 import { useLocation, useNavigate } from "react-router-dom";
@@ -76,6 +76,25 @@ export function MonitorPage() {
     open: boolean;
     preselect: string | null;
   }>({ open: false, preselect: null });
+  // todo02：Ctrl+左键多选直播间；关闭按钮优先关选中，无选中才关全部
+  const [selectedRoomKeys, setSelectedRoomKeys] = useState<Set<string>>(() => new Set());
+
+  const toggleRoomSelected = useCallback((key: string) => {
+    setSelectedRoomKeys((previous) => {
+      const next = new Set(previous);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }, []);
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setSelectedRoomKeys(new Set());
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, []);
   const gridRef = useRef<HTMLDivElement>(null);
   const previousAudioFocusRef = useRef<string[] | null>(null);
   const handledMonitorRequestRef = useRef<string | null>(null);
@@ -182,19 +201,27 @@ export function MonitorPage() {
 
   useEffect(() => {
     const closeAllRooms = () => {
-      setWorkspace((previous) => ({
-        ...previous,
-        rooms: [],
-        audioFocusKeys: [],
-      }));
-      setNotice("已关闭所有直播间");
+      const selected = selectedRoomKeys;
+      setWorkspace((previous) => {
+        const rooms =
+          selected.size > 0 ? previous.rooms.filter((room) => !selected.has(room.key)) : [];
+        return {
+          ...previous,
+          rooms,
+          audioFocusKeys: previous.audioFocusKeys.filter((key) =>
+            rooms.some((room) => room.key === key),
+          ),
+        };
+      });
+      setNotice(selected.size > 0 ? `已关闭 ${selected.size} 个选中直播间` : "已关闭所有直播间");
+      setSelectedRoomKeys(new Set());
       if (previousAudioFocusRef.current) void exitWindowFullscreen();
       previousAudioFocusRef.current = null;
       setWindowFullscreenRoomKey(null);
     };
     window.addEventListener("dtv:monitor-close-all", closeAllRooms);
     return () => window.removeEventListener("dtv:monitor-close-all", closeAllRooms);
-  }, [setWorkspace]);
+  }, [setWorkspace, selectedRoomKeys]);
 
   useEffect(
     () =>
@@ -617,6 +644,8 @@ export function MonitorPage() {
                 placement={placement}
                 replayEnabled={replayEnabled}
                 replaySeconds={replaySeconds}
+                selected={selectedRoomKeys.has(room.key)}
+                onToggleSelect={toggleRoomSelected}
                 focused={audioFocusKeys.includes(room.key)}
                 soundEnabled={globalAudioEnabled}
                 globalVolume={globalVolume}

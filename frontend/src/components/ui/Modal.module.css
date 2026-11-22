@@ -51,6 +51,14 @@
   padding: 16px 14px 14px 18px;
   border-bottom: 1px solid var(--separator);
   flex: 0 0 auto;
+  /* todo02：标题栏可拖动弹窗 */
+  cursor: grab;
+  user-select: none;
+  touch-action: none;
+}
+
+.headerDragging {
+  cursor: grabbing;
 }
 
 .title {

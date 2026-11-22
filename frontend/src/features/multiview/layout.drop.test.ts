@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   findFreePlacement,
   freezeRoomPlacements,
+  gridPlacementsOverlap,
   moveRoomToCell,
   packRoomGrid,
   type GridPosition,
@@ -111,6 +112,23 @@ describe("moveRoomToCell", () => {
           cell.row >= p.row && cell.row < p.row + p.rows,
       );
       const result = moveRoomToCell(rooms, GRID, fromKey, cell);
+      // 目标格为空但"按尺寸钳制后的落点"与他房重叠 → 合法拒绝（与引导红格一致）
+      const fromRoom = rooms.find((r) => r.key === fromKey)!;
+      const clamped = {
+        column: Math.min(cell.column, GRID.columns - fromRoom.size.columns + 1),
+        row: Math.min(cell.row, GRID.rows - fromRoom.size.rows + 1),
+        ...fromRoom.size,
+      };
+      const blocked =
+        !hit &&
+        [...before.entries()].some(
+          ([key, p]) => key !== fromKey && gridPlacementsOverlap(clamped, p),
+        );
+      if (blocked) {
+        expect("error" in result).toBe(true);
+        drops++;
+        continue;
+      }
       expect("rooms" in result).toBe(true);
       if (!("rooms" in result)) continue;
       const after = packRoomGrid(result.rooms, GRID);

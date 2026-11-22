@@ -59,6 +59,8 @@ export interface Streamer {
   viewers: number;
   categoryName: string;
   isLive: boolean;
+  /** 轮播中：可播但内容是循环视频（todo02 三态徽章用） */
+  isLoop?: boolean;
 }
 
 /**
@@ -84,6 +86,8 @@ export interface StreamInfo {
   nickname: string;
   avatar: string;
   isLive: boolean;
+  /** 轮播中：可播但内容是循环视频 */
+  isLoop?: boolean;
   /** 可切换的清晰度，按从高到低排列 */
   variants: StreamVariant[];
   /** 可切换的线路，单线路时为空数组（不显示线路选择） */
@@ -96,7 +100,8 @@ export interface StreamVariant {
   /** 显示名：原画 / 蓝光4M / 超清 / 高清（斗鱼下发的档位名） */
   label: string;
   url: string;
-  format: "flv" | "hls";
+  /** mp4 = B 站轮播房的点播整段视频（原生 <video> 播放，支持 seek） */
+  format: "flv" | "hls" | "mp4";
   /** 同一实际档位在多个 CDN 上的地址（斗鱼），第一个与 url 相同 */
   urls?: string[];
   /** 服务端确认的实际档位；null/undefined 表示未确认 */

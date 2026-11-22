@@ -5,7 +5,8 @@ import { loadRaw, saveRaw, STORAGE_KEYS } from "@/lib/storage";
 
 export interface PlayerSource {
   url: string;
-  format: "flv" | "hls";
+  /** mp4 = 点播整段视频（B 站轮播），原生播放、可 seek，按 VOD 处理 */
+  format: "flv" | "hls" | "mp4";
   /**
    * 每次重新取流 +1。
    *
@@ -42,6 +43,8 @@ export interface UseXgPlayerResult {
   togglePip: () => void;
   audioBoostSupported: boolean;
   activateAudioBoost: () => boolean;
+  /** 每次视频自然播完 +1（轮播稿件播完时用来重新取下一条） */
+  endedNonce: number;
 }
 
 export interface PlayerAudioState {
@@ -111,6 +114,7 @@ export function useXgPlayer(
   const [mediaElement, setMediaElement] = useState<HTMLVideoElement | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [errorNonce, setErrorNonce] = useState(0);
+  const [endedNonce, setEndedNonce] = useState(0);
   const [volume, setVolumeState] = useState(readVolume);
   const lastVolumeRef = useRef(volume > 0 ? volume : DEFAULT_VOLUME);
   const [pipSupported, setPipSupported] = useState(false);
@@ -187,28 +191,33 @@ export function useXgPlayer(
     let resizeObserver: ResizeObserver | null = null;
     let detachPip: (() => void) | null = null;
     let detachVideoBox: (() => void) | null = null;
+    let detachEnded: (() => void) | null = null;
     setState("loading");
     setError(null);
 
     void (async () => {
+      // mp4（轮播点播）走原生 <video>，不需要 FLV/HLS 插件，也不按直播处理
+      const isVOD = format === "mp4";
       let plugin: unknown = null;
-      try {
-        if (format === "flv") {
-          const mod = await import("xgplayer-flv");
-          plugin = mod.default;
-        } else {
-          const mod = await import("xgplayer-hls.js");
-          plugin = mod.default;
+      if (!isVOD) {
+        try {
+          if (format === "flv") {
+            const mod = await import("xgplayer-flv");
+            plugin = mod.default;
+          } else {
+            const mod = await import("xgplayer-hls.js");
+            plugin = mod.default;
+          }
+        } catch {
+          // 插件缺失时退化为原生播放（HLS 在部分 WebView 里不支持，会走 error 分支）
         }
-      } catch {
-        // 插件缺失时退化为原生播放（HLS 在部分 WebView 里不支持，会走 error 分支）
       }
       if (disposed) return;
 
       const options: Record<string, unknown> = {
         el,
         url,
-        isLive,
+        isLive: isVOD ? false : isLive,
         width: "100%",
         height: "100%",
         videoFillMode: "contain",
@@ -276,6 +285,14 @@ export function useXgPlayer(
 
       const media = player.media as HTMLVideoElement | null;
       setMediaElement(media);
+      if (media && isVOD) {
+        // 轮播稿件自然播完：通知外层重新取流（房间会轮到下一条稿件）
+        const onEnded = () => {
+          if (!disposed) setEndedNonce((n) => n + 1);
+        };
+        media.addEventListener("ended", onEnded);
+        detachEnded = () => media.removeEventListener("ended", onEnded);
+      }
       const currentAudio = audioRef.current;
       if (media && currentAudio) {
         media.muted = currentAudio.muted;
@@ -343,6 +360,8 @@ export function useXgPlayer(
       detachPip = null;
       detachVideoBox?.();
       detachVideoBox = null;
+      detachEnded?.();
+      detachEnded = null;
       setPipActive(false);
       setPipSupported(false);
 
@@ -464,6 +483,7 @@ export function useXgPlayer(
     error,
     mediaElement,
     errorNonce,
+    endedNonce,
     volume,
     togglePlay,
     toggleMute,

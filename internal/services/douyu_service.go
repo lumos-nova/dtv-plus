@@ -10,6 +10,7 @@ package services
 import (
 	"fmt"
 	"log"
+	"log/slog"
 	"strings"
 
 	"dtv/internal/platforms/common"
@@ -146,7 +147,11 @@ func (s *DouyuService) GetStreamInfo(roomID string, line string) (*common.Stream
 	info, err := s.client.StreamInfo(roomID, strings.TrimSpace(line))
 	if err != nil {
 		log.Printf("[DouyuService] 取流信息失败 room=%s line=%s: %v", roomID, line, err)
+		slog.Warn("斗鱼取流信息失败", "room", roomID, "line", line, "error", err)
 		return nil, err
+	}
+	if info.IsLoop {
+		slog.Info("斗鱼轮播房取流", "room", roomID, "variants", len(info.Variants))
 	}
 	return info, nil
 }

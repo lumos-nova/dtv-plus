@@ -66,6 +66,9 @@ interface RoomTileProps {
   placement: GridPlacement;
   replayEnabled: boolean;
   replaySeconds: number;
+  /** todo02：Ctrl 多选态与切换回调 */
+  selected: boolean;
+  onToggleSelect: (key: string) => void;
   focused: boolean;
   soundEnabled: boolean;
   globalVolume: number;
@@ -95,6 +98,8 @@ export function RoomTile({
   placement,
   replayEnabled,
   replaySeconds,
+  selected,
+  onToggleSelect,
   focused,
   soundEnabled,
   globalVolume,
@@ -438,6 +443,7 @@ export function RoomTile({
       viewers: 0,
       categoryName: "",
       isLive: info?.isLive ?? true,
+      isLoop: info?.isLoop,
     });
   };
 
@@ -513,6 +519,12 @@ export function RoomTile({
     const timer = window.setTimeout(() => setRetryKey((key) => key + 1), delay);
     return () => window.clearTimeout(timer);
   }, [player.errorNonce, player.state]);
+
+  /* 轮播稿件自然播完：重新取流拿下一条。 */
+  useEffect(() => {
+    if (!player.endedNonce || !info?.isLoop) return;
+    setRetryKey((key) => key + 1);
+  }, [player.endedNonce, info?.isLoop]);
 
   useEffect(() => {
     if (!info?.roomId || !room.danmakuEnabled) {
@@ -609,6 +621,7 @@ export function RoomTile({
         focused && styles.audioFocused,
         player.state === "playing" && styles.playing,
         info && !info.isLive && styles.offline,
+        selected && styles.tileSelected,
         longPressDragging && styles.tileDragging,
         resizing && styles.resizing,
         dropTarget && styles.tileDropTarget,
@@ -617,6 +630,13 @@ export function RoomTile({
       onClickCapture={(event) => {
         const target = event.target;
         if (event.button !== 0) return;
+        // todo02：Ctrl+左键 = 多选切换，不触发音频焦点 / 播放交互
+        if (event.ctrlKey || event.metaKey) {
+          event.preventDefault();
+          event.stopPropagation();
+          onToggleSelect(room.key);
+          return;
+        }
         if (Date.now() - lastRoomDragEndedAt < 250) {
           event.preventDefault();
           event.stopPropagation();

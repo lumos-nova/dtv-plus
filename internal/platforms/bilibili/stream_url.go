@@ -158,6 +158,82 @@ func (c *Client) fetchPlayInfo(roomID string, qn int64) (*streamPlayInfo, error)
 	return out, nil
 }
 
+// fetchPlayInfoV1 请求旧版 playUrl 接口并转成 streamPlayInfo。
+//
+// 实测（2026-11-23，房间 5148）：轮播房在 v2 getRoomPlayInfo 里
+// playurl_info 恒为 null（platform=web/html5 都一样），而 v1 playUrl
+// 仍正常下发地址：platform=h5 给 HLS（.m3u8），platform=web 给 FLV。
+// 轮播通常只有原画一档，请求其它 qn 时上游会回落到 current_qn。
+func (c *Client) fetchPlayInfoV1(roomID string, qn int64) (*streamPlayInfo, error) {
+	params := "cid=" + queryEscape(roomID) +
+		"&platform=h5" +
+		"&otype=json" +
+		"&quality_description=1"
+	if qn > 0 {
+		params += "&qn=" + strconv.FormatInt(qn, 10)
+	}
+
+	body, err := c.getRaw(buildURL(urlRoomPlayURL, params))
+	if err != nil {
+		return nil, describe("playUrl 请求失败", err)
+	}
+
+	var resp playURLV1Response
+	if err := unmarshalJSON(body, &resp); err != nil {
+		return nil, describe("playUrl 解析失败", err)
+	}
+	return resp.toStreamPlayInfo()
+}
+
+// playURLV1Response 是 v1 playUrl 的响应模型。
+type playURLV1Response struct {
+	Code int64  `json:"code"`
+	Msg  string `json:"msg"`
+	Data struct {
+		CurrentQN any `json:"current_qn"`
+		Quality   []struct {
+			QN   any    `json:"qn"`
+			Desc string `json:"desc"`
+		} `json:"quality_description"`
+		DURL []struct {
+			URL string `json:"url"`
+		} `json:"durl"`
+	} `json:"data"`
+}
+
+// toStreamPlayInfo 把 v1 响应转成与 v2 相同的 streamPlayInfo。
+func (resp *playURLV1Response) toStreamPlayInfo() (*streamPlayInfo, error) {
+	if resp.Code != 0 {
+		return nil, &apiError{Code: resp.Code, Message: resp.Msg, Endpoint: "playUrl"}
+	}
+
+	out := &streamPlayInfo{
+		QNDesc:    map[int64]string{},
+		CurrentQN: jsonInt(resp.Data.CurrentQN),
+	}
+	for _, item := range resp.Data.Quality {
+		qnValue := jsonInt(item.QN)
+		if qnValue > 0 {
+			out.QNDesc[qnValue] = item.Desc
+			out.AcceptQN = append(out.AcceptQN, qnValue)
+		}
+	}
+	for _, d := range resp.Data.DURL {
+		if d.URL == "" {
+			continue
+		}
+		out.PlayURLs = append(out.PlayURLs, playURL{
+			URL:      enforceHTTPS(d.URL),
+			Format:   "hls",
+			Protocol: "http_hls",
+			QN:       out.CurrentQN,
+		})
+	}
+
+	sort.Slice(out.AcceptQN, func(i, j int) bool { return out.AcceptQN[i] > out.AcceptQN[j] })
+	return out, nil
+}
+
 // joinURL 拼 host+base_url+extra。
 func joinURL(host, base, extra string) string {
 	if host == "" || base == "" {
@@ -298,11 +374,20 @@ func qnSlug(qn int64) string {
 }
 
 // resolveVariant 为某个 qn 拉一次 playinfo 并挑出可播地址。
+//
+// v2 没给地址（轮播房 playurl_info 为 null）时回退 v1 playUrl。
 func (c *Client) resolveVariant(roomID string, qn int64) (string, bool) {
 	info, err := c.fetchPlayInfo(roomID, qn)
 	if err != nil {
 		debugLog("取流 qn=%d 失败: %v", qn, err)
-		return "", false
+		info = nil
+	}
+	if info == nil || len(info.PlayURLs) == 0 {
+		info, err = c.fetchPlayInfoV1(roomID, qn)
+		if err != nil {
+			debugLog("v1 取流 qn=%d 失败: %v", qn, err)
+			return "", false
+		}
 	}
 
 	// 只保留当前 qn 的地址（上游一次只给一个档位）
@@ -341,6 +426,7 @@ func (c *Client) StreamInfo(roomID, line string) (*common.StreamInfo, error) {
 		Title:    title,
 		Nickname: uname,
 		IsLive:   bilibiliLiveStatus(liveStatus),
+		IsLoop:   liveStatus == 2,
 		Variants: []common.StreamVariant{},
 		Lines:    []common.LineOption{{ID: "auto", Label: "自动"}},
 	}
@@ -356,16 +442,37 @@ func (c *Client) StreamInfo(roomID, line string) (*common.StreamInfo, error) {
 		}
 		info.Avatar = roomData.Avatar
 		info.IsLive = bilibiliLiveStatus(roomData.LiveStatus)
+		info.IsLoop = roomData.LiveStatus == 2
 	}
 
 	if !info.IsLive {
 		return info, nil
 	}
 
-	// 先探一次拿可用档位（qn 降序）
+	// 轮播房：直播流地址是冷流（节点挂起/404），必须走点播链路取整段 MP4。
+	// 点播链路失败时不再回退直播流地址——那些 URL 取到也播不了，只会让
+	// 前端卡在"缓冲→重连"死循环；返回空档位让页面明确提示不可播。
+	if info.IsLoop {
+		if variant := c.resolveLoopVariant(realID); variant != nil {
+			info.Variants = append(info.Variants, *variant)
+		} else {
+			info.IsLive = false
+		}
+		return info, nil
+	}
+
+	// 先探一次拿可用档位（qn 降序）。
+	// 轮播房 v2 的 playurl_info 为 null（不报错但没地址），回退 v1 playUrl。
 	probe, err := c.fetchPlayInfo(realID, 0)
 	if err != nil {
 		return nil, err
+	}
+	if len(probe.PlayURLs) == 0 {
+		if v1, v1Err := c.fetchPlayInfoV1(realID, 0); v1Err == nil && len(v1.PlayURLs) > 0 {
+			probe = v1
+		} else if v1Err != nil {
+			debugLog("轮播/空地址回退 v1 失败: %v", v1Err)
+		}
 	}
 	available := probe.AcceptQN
 	if len(available) == 0 {
@@ -441,6 +548,9 @@ func variantFormat(url string) string {
 	if strings.Contains(url, ".m3u8") {
 		return "hls"
 	}
+	if strings.Contains(url, ".mp4") {
+		return "mp4"
+	}
 	return "flv"
 }
 
@@ -451,15 +561,27 @@ func (c *Client) StreamURL(roomID, quality, line string) (string, error) {
 		return "", fmt.Errorf("房间号为空")
 	}
 
-	realID, _, _, _, err := c.roomInit(normalized)
+	realID, liveStatus, _, _, err := c.roomInit(normalized)
 	if err != nil {
 		return "", err
 	}
 	_ = line
 
+	// 轮播房走点播链路（直播流地址是冷流，取到也播不了）。
+	if liveStatus == 2 {
+		if variant := c.resolveLoopVariant(realID); variant != nil {
+			return variant.URL, nil
+		}
+	}
+
 	probe, err := c.fetchPlayInfo(realID, 0)
 	if err != nil {
 		return "", err
+	}
+	if len(probe.PlayURLs) == 0 {
+		if v1, v1Err := c.fetchPlayInfoV1(realID, 0); v1Err == nil && len(v1.PlayURLs) > 0 {
+			probe = v1
+		}
 	}
 
 	qn, ok := qualityLabelToQN(quality, probe.AcceptQN)

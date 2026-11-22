@@ -171,13 +171,13 @@ func (c *Client) fetchRoomInfo(roomID string) (*roomInfoData, error) {
 	}, nil
 }
 
-// bilibiliLiveStatus 把 B 站 live_status 归一成"是否正在直播"。
+// bilibiliLiveStatus 把 B 站 live_status 归一成"是否可播放"。
 //
-// 对齐旧项目（web/src/components/follows/FollowsList.tsx 的 refreshOne）：
-// 只有 live_status==1 才是直播中；2 是"轮播/回放"，界面上按未开播处理，
-// 否则轮播中的房间会一直挂着"直播中"，刷新也下不来。
+// todo02：轮播（live_status==2）也要能播，所以 IsLive 语义为"可播放"
+// （1=直播中、2=轮播）；轮播标记由调用方用 liveStatus==2 单独填 IsLoop，
+// 前端据此显示"轮播中"徽章，而不是把轮播当未开播。
 func bilibiliLiveStatus(liveStatus int64) bool {
-	return liveStatus == 1
+	return liveStatus == 1 || liveStatus == 2
 }
 
 // Streamer 返回主播卡片所需的房间详情。
@@ -203,6 +203,7 @@ func (c *Client) Streamer(roomID string) (common.Streamer, error) {
 			Viewers:      0,
 			CategoryName: "",
 			IsLive:       bilibiliLiveStatus(liveStatus),
+			IsLoop:       liveStatus == 2,
 		}, nil
 	}
 
@@ -216,6 +217,7 @@ func (c *Client) Streamer(roomID string) (common.Streamer, error) {
 		Viewers:      info.Viewers,
 		CategoryName: info.AreaName,
 		IsLive:       bilibiliLiveStatus(info.LiveStatus),
+		IsLoop:       info.LiveStatus == 2,
 	}, nil
 }
 

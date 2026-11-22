@@ -607,6 +607,7 @@ func (c *Client) StreamInfo(roomID, line string) (*common.StreamInfo, error) {
 		Nickname: detail.Nickname,
 		Avatar:   detail.Avatar,
 		IsLive:   detail.IsLive,
+		IsLoop:   detail.VideoLoop,
 		Variants: []common.StreamVariant{},
 		Lines:    []common.LineOption{},
 	}
