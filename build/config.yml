@@ -9,9 +9,9 @@ info:
   productName: "DTV-PLUS" # The name of the application
   productIdentifier: "com.dtv-plus.app" # The unique product identifier
   description: "DTV-PLUS — 直播聚合客户端" # The application description
-  copyright: "(c) 2026, DTV" # Copyright text
+  copyright: "(c) 2026, DTV-PLUS" # Copyright text
   comments: "https://github.com/lumos-nova/dtv-plus" # Comments
-  version: "1.0.0" # The application version
+  version: "1.0.1" # The application version
   # cfBundleIconName: "appicon" # The macOS icon name in Assets.car icon bundles (optional)
   #                               # Should match the name of your .icon file without the extension
   #                               # If not set and Assets.car exists, defaults to "appicon"
