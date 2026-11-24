@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseLiveRoomUrl } from "./roomUrl";
+import { liveRoomShareUrl, parseLiveRoomUrl } from "./roomUrl";
 
 describe("parseLiveRoomUrl", () => {
   it.each([
@@ -23,5 +23,25 @@ describe("parseLiveRoomUrl", () => {
     "javascript://live.bilibili.com/123",
   ])("rejects unsupported or unsafe URL %s", (url) => {
     expect(() => parseLiveRoomUrl(url)).toThrow();
+  });
+});
+
+describe("liveRoomShareUrl", () => {
+  it.each([
+    ["douyu", "9999", "https://www.douyu.com/9999"],
+    ["huya", "123456", "https://www.huya.com/123456"],
+    ["douyin", "933572413882", "https://live.douyin.com/933572413882"],
+    ["bilibili", "5148", "https://live.bilibili.com/5148"],
+  ] as const)("builds %s share url", (platform, roomId, expected) => {
+    expect(liveRoomShareUrl(platform, roomId)).toBe(expected);
+  });
+
+  it("round-trips through parseLiveRoomUrl", () => {
+    for (const platform of ["douyu", "huya", "douyin", "bilibili"] as const) {
+      expect(parseLiveRoomUrl(liveRoomShareUrl(platform, "12345"))).toEqual({
+        platform,
+        roomId: "12345",
+      });
+    }
   });
 });

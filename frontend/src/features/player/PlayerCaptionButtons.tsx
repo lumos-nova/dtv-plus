@@ -1,5 +1,13 @@
 import { useEffect, useState } from "react";
-import { closeWindow, isMaximised, minimiseWindow, toggleMaximiseWindow, useDesktopOS } from "@/lib/window";
+import {
+  closeWindow,
+  exitWindowFullscreen,
+  isMaximised,
+  isWindowFullscreen,
+  minimiseWindow,
+  toggleMaximiseWindow,
+  useDesktopOS,
+} from "@/lib/window";
 import styles from "./PlayerCaptionButtons.module.css";
 
 /**
@@ -30,8 +38,18 @@ export function PlayerCaptionButtons({ className }: { className?: string }) {
   if (os === "darwin") return null;
 
   const onToggleMaximise = () => {
-    void toggleMaximiseWindow();
-    setMaximised((value) => !value);
+    // todo05：原生全屏时窗口是 WS_POPUP，直接 ToggleMaximise 会把
+    // 全屏窗口"最大化"成坏状态且无法还原。全屏下这个按钮的语义是
+    // 「退出全屏回到普通窗口」，退出后再按真实状态同步图标。
+    void isWindowFullscreen().then(async (fullscreen) => {
+      if (fullscreen) {
+        await exitWindowFullscreen();
+        setMaximised(await isMaximised());
+        return;
+      }
+      await toggleMaximiseWindow();
+      setMaximised(await isMaximised());
+    });
   };
 
   return (

@@ -52,8 +52,8 @@ export default defineConfig({
     chunkSizeWarningLimit: 1200,
     rollupOptions: {
       output: {
-        // P-01：把播放器/弹幕库拆成独立 chunk。
-        // PlayerPage 已改为 lazy，这些 chunk 只在进入直播间时下载。
+        // P-01：把播放器/弹幕库拆成独立 chunk，
+        // 供多房间工作台（MonitorPage / RoomTile）使用。
         manualChunks(id) {
           if (id.includes("node_modules/xgplayer")) return "player-xgplayer";
           if (id.includes("node_modules/@ironkinoko/danmaku")) return "player-danmaku";

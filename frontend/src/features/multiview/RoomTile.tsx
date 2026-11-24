@@ -1,33 +1,14 @@
-import {
-  Maximize,
-  FolderPlus,
-  History,
-  Monitor,
-  Minimize2,
-  MessageSquare,
-  MessageSquareOff,
-  PanelRightClose,
-  PanelRightOpen,
-  Pause,
-  Play,
-  RotateCw,
-  Video,
-  Volume2,
-  VolumeX,
-  X,
-} from "lucide-react";
+import { FolderPlus, History, Video } from "lucide-react";
 import { useEffect, useRef, useState, type PointerEvent } from "react";
 import { createPortal } from "react-dom";
-import { api, PLATFORM_LABEL, PLATFORM_LOGO, type DanmakuMessage, type StreamInfo } from "@/api";
+import { api, PLATFORM_LABEL, type DanmakuMessage, type StreamInfo } from "@/api";
 import { DanmuOverlay } from "@/features/player/DanmuOverlay";
 import { DanmuPanel } from "@/features/player/DanmuPanel";
-import { DanmuBlockControl } from "@/features/player/DanmuBlockControl";
-import { DanmuSettingsControl } from "@/features/player/DanmuSettingsControl";
 import { isDanmuBlocked, type DanmuUserSettings } from "@/features/player/danmuSettings";
-import { ControlsDropdown } from "@/features/player/ControlsDropdown";
-import { VolumeSlider } from "@/features/player/VolumeSlider";
+import { PlayerChrome } from "@/features/player/PlayerChrome";
 import { useXgPlayer } from "@/features/player/useXgPlayer";
 import { cn } from "@/lib/cn";
+import { usePortalHost } from "@/lib/portal";
 import { useFollow } from "@/state/FollowProvider";
 import { useToast } from "@/state/ToastProvider";
 import {
@@ -49,6 +30,8 @@ import styles from "./RoomTile.module.css";
 const MAX_MESSAGES = 120;
 const MESSAGE_FLUSH_MS = 150;
 const ROOM_DRAG_HOLD_MS = 220;
+/** 卡片内鼠标静止多久后自动隐藏控制栏 / 主播信息 */
+const CHROME_IDLE_MS = 2000;
 let lastRoomDragEndedAt = 0;
 
 const RESIZE_HANDLES: { direction: ResizeDirection; className: string; label: string }[] = [
@@ -165,6 +148,8 @@ export function RoomTile({
   const [moveOffset, setMoveOffset] = useState({ x: 0, y: 0 });
   const [danmakuPanelOpen, setDanmakuPanelOpen] = useState(false);
   const [tileFullscreen, setTileFullscreen] = useState(false);
+  // todo05：单卡 DOM 全屏时右键菜单要挂进全屏元素，否则 body 上的菜单不可见。
+  const portalHost = usePortalHost();
   const { toast } = useToast();
   const { folders, isFollowing, toggleFollow, createFolder, moveToFolder, removeFromFolder } =
     useFollow();
@@ -507,6 +492,25 @@ export function RoomTile({
     event.currentTarget.setPointerCapture(event.pointerId);
   };
 
+  /* 手动切换清晰度 / 线路 = 新的开始：清掉之前的连续失败计数，
+   * 不让上一个档位的失败次数累加到新档位上。 */
+  useEffect(() => {
+    reconnectAttemptRef.current = 0;
+  }, [room.qualityId, room.lineId]);
+
+  /* 错误回调里读最新的档位信息（effect 只按 errorNonce/state 重跑，
+   * 与 useXgPlayer 的重建节奏保持一致，避免切档位时误计一次失败）。 */
+  const qualityFallbackRef = useRef({
+    qualityId: room.qualityId,
+    nickname: info?.nickname ?? "",
+    onQualityChange,
+  });
+  qualityFallbackRef.current = {
+    qualityId: room.qualityId,
+    nickname: info?.nickname ?? "",
+    onQualityChange,
+  };
+
   useEffect(() => {
     if (player.state === "playing") {
       reconnectAttemptRef.current = 0;
@@ -514,10 +518,23 @@ export function RoomTile({
     }
     if (player.state !== "error") return;
     reconnectAttemptRef.current += 1;
+    // 手动选的清晰度连续失败 3 次：多半是该档位本身不可用（需要登录、
+    // 匿名被降级、地址失效等），继续对着同一个地址退避重试只会无限重连。
+    // 切回自动选档（pickTileVariant 会挑最省资源且通常可播的档位）。
+    const fallback = qualityFallbackRef.current;
+    if (reconnectAttemptRef.current >= 3 && fallback.qualityId) {
+      reconnectAttemptRef.current = 0;
+      fallback.onQualityChange(room.key, "");
+      toast(
+        `${fallback.nickname || `房间 ${room.roomId}`}：所选清晰度暂不可用，已切回默认清晰度`,
+        "info",
+      );
+      return;
+    }
     const delay = Math.min(30_000, 2_000 * 2 ** Math.min(reconnectAttemptRef.current - 1, 4));
     const timer = window.setTimeout(() => setRetryKey((key) => key + 1), delay);
     return () => window.clearTimeout(timer);
-  }, [player.errorNonce, player.state]);
+  }, [player.errorNonce, player.state, room.key, room.roomId, toast]);
 
   /* 轮播稿件自然播完：重新取流拿下一条。 */
   useEffect(() => {
@@ -590,6 +607,72 @@ export function RoomTile({
     return () => tile.removeEventListener("contextmenu", handleContextMenu, true);
   }, []);
 
+  /* ------------------------------------------- 悬浮 chrome 的空闲自动隐藏
+   * 卡片的显隐原本纯靠 CSS :hover —— 鼠标停在卡片上不动时 chrome 永远常显。
+   * 用户要求：鼠标静止 2s 就隐藏顶部主播信息 + 底部控制条。
+   * 这里监听卡片内的鼠标活动，静止超时后给 PlayerChrome 传 hidden
+   *（.hidden 带 !important，能压过 :hover / :focus-within 的常显规则）。
+   * 弹层打开 / 拖拽缩放中 / 非播放态不隐藏（暂停时保留"找得到播放键"的设计）。 */
+  const [chromeHidden, setChromeHidden] = useState(false);
+  const [chromeMenuOpen, setChromeMenuOpen] = useState(false);
+  /** 每次进入空闲隐藏 +1：通知 chrome 收掉悬停展开的下拉/面板 */
+  const [chromeCloseSignal, setChromeCloseSignal] = useState(0);
+  const chromeIdleTimerRef = useRef<number | null>(null);
+  const chromeIdleBlocked =
+    player.state !== "playing" ||
+    chromeMenuOpen ||
+    Boolean(contextMenu) ||
+    groupDialogOpen ||
+    Boolean(highlight) ||
+    longPressDragging ||
+    resizing;
+
+  useEffect(() => {
+    const tile = tileRef.current;
+    const clearTimer = () => {
+      if (chromeIdleTimerRef.current != null) {
+        window.clearTimeout(chromeIdleTimerRef.current);
+        chromeIdleTimerRef.current = null;
+      }
+    };
+    if (!tile || chromeIdleBlocked) {
+      clearTimer();
+      setChromeHidden(false);
+      return clearTimer;
+    }
+    const arm = () => {
+      clearTimer();
+      chromeIdleTimerRef.current = window.setTimeout(() => {
+        chromeIdleTimerRef.current = null;
+        setChromeHidden(true);
+        setChromeCloseSignal((n) => n + 1);
+      }, CHROME_IDLE_MS);
+    };
+    const onActivity = () => {
+      setChromeHidden(false);
+      arm();
+    };
+    // 鼠标离开卡片：交还给 CSS :not(:hover) 隐藏，复位状态等下次进入重新计时
+    const onLeave = () => {
+      clearTimer();
+      setChromeHidden(false);
+    };
+    // 捕获阶段监听：xgplayer / 弹幕层可能在中途 stopPropagation，
+    // 冒泡阶段会漏掉鼠标活动。
+    tile.addEventListener("mousemove", onActivity, { passive: true, capture: true });
+    tile.addEventListener("mousedown", onActivity, { passive: true, capture: true });
+    tile.addEventListener("pointermove", onActivity, { passive: true, capture: true });
+    tile.addEventListener("pointerleave", onLeave);
+    arm();
+    return () => {
+      tile.removeEventListener("mousemove", onActivity, { capture: true });
+      tile.removeEventListener("mousedown", onActivity, { capture: true });
+      tile.removeEventListener("pointermove", onActivity, { capture: true });
+      tile.removeEventListener("pointerleave", onLeave);
+      clearTimer();
+    };
+  }, [chromeIdleBlocked]);
+
   const displayName = info?.nickname || `房间 ${room.roomId}`;
   const active = room.danmakuEnabled;
   const qualityOptions = (info?.variants ?? []).map((item) => ({
@@ -624,6 +707,8 @@ export function RoomTile({
         longPressDragging && styles.tileDragging,
         resizing && styles.resizing,
         dropTarget && styles.tileDropTarget,
+        chromeHidden && styles.tileIdle,
+        (windowFullscreen || tileFullscreen) && styles.tileFull,
       )}
       data-monitor-room-key={room.key}
       onClickCapture={(event) => {
@@ -661,6 +746,9 @@ export function RoomTile({
     >
       <div className={styles.media}>
         <div ref={playerHostRef} className={styles.playerHost} />
+        {/* 常驻合成哨兵：防止控制条隐藏后视频被提升成硬件叠加平面，
+            盖住唤回的 header/footer（直播间全屏无按键的根因）。 */}
+        <div className={styles.compositeGuard} aria-hidden="true" />
         {info?.isLive && (
           <DanmuOverlay
             messages={messages}
@@ -702,158 +790,64 @@ export function RoomTile({
           </div>
         )}
 
-        <header className={styles.header}>
-          <img className={styles.logo} src={PLATFORM_LOGO[room.platform]} alt="" />
-          <div className={styles.roomMeta}>
-            <span className={styles.nickname}>{displayName}</span>
-            <span className={styles.roomNumber}>
-              {PLATFORM_LABEL[room.platform]} · {room.roomId}
-            </span>
-            {currentFolder && <span className={styles.groupBadge}>{currentFolder.name}</span>}
-          </div>
-          <button
-            type="button"
-            className={styles.iconButton}
-            onClick={() => onRemove(room.key)}
-            title="从工作台移除（独立录制不受影响）"
-            aria-label="移除房间"
-          >
-            <X size={15} />
-          </button>
-        </header>
-
-        <footer className={styles.footer}>
-          <div className={styles.playbackControls}>
-            <button
-              type="button"
-              className={styles.iconButton}
-              onClick={player.togglePlay}
-              disabled={!info?.isLive || player.state === "idle"}
-              title={player.state === "paused" ? "继续播放" : "暂停"}
-              aria-label={player.state === "paused" ? "继续播放" : "暂停"}
-            >
-              {player.state === "paused" ? (
-                <Play size={22} strokeWidth={2} fill="currentColor" />
-              ) : (
-                <Pause size={22} strokeWidth={2} fill="currentColor" />
-              )}
-            </button>
-            <button
-              type="button"
-              className={cn(
-                styles.iconButton,
-                (player.state === "loading" || player.state === "buffering") && styles.refreshing,
-              )}
-              onClick={() => setRetryKey((key) => key + 1)}
-              title="刷新直播"
-              aria-label="刷新直播"
-            >
-              <RotateCw size={19} strokeWidth={2} />
-            </button>
-          </div>
-          <div className={styles.audioControl}>
-            <button
-              type="button"
-              className={cn(styles.iconButton, focused && styles.activeButton)}
-              onClick={() => {
-                if (room.volume > 1) player.activateAudioBoost();
-                onAudioFocus(room.key, true);
-              }}
-              aria-pressed={focused}
-              title={focused ? "关闭本房间声音" : "开启本房间声音"}
-              aria-label={focused ? "关闭本房间声音" : "开启本房间声音"}
-            >
-              {focused ? <Volume2 size={18} /> : <VolumeX size={18} />}
-            </button>
-            <div className={styles.volumeControl}>
-              <VolumeSlider
-                className={styles.volumeSlider}
-                label="房间音量"
-                value={room.volume}
-                max={2}
-                step={0.05}
-                orientation="vertical"
-                onChange={(volume) => {
-                  if (volume > 1) player.activateAudioBoost();
-                  onVolumeChange(room.key, volume);
-                }}
-              />
-              <span className={styles.volumeValue}>{Math.round(room.volume * 100)}%</span>
-            </div>
-          </div>
-          {room.volume > 1 && !player.audioBoostSupported && (
-            <span className={styles.boostWarning} role="status">
-              增强不可用
-            </span>
-          )}
-          <div className={styles.roomControls}>
-            <button
-              type="button"
-              className={cn(styles.iconButton, room.danmakuEnabled && styles.activeButton)}
-              onClick={() => onDanmakuToggle(room.key)}
-              aria-pressed={room.danmakuEnabled}
-              title={room.danmakuEnabled ? "关闭本房间弹幕" : "开启本房间弹幕"}
-              aria-label={room.danmakuEnabled ? "关闭本房间弹幕" : "开启本房间弹幕"}
-            >
-              {room.danmakuEnabled ? <MessageSquare size={18} /> : <MessageSquareOff size={18} />}
-            </button>
-            <DanmuBlockControl
-              keywords={blockKeywords}
-              onAdd={onAddBlockKeyword}
-              onRemove={onRemoveBlockKeyword}
-              onClear={onClearBlockKeywords}
-            />
-            <button
-              type="button"
-              className={cn(styles.iconButton, danmakuPanelOpen && styles.activeButton)}
-              onClick={() => setDanmakuPanelOpen((open) => !open)}
-              aria-pressed={danmakuPanelOpen}
-              title={danmakuPanelOpen ? "关闭弹幕列表" : "打开弹幕列表"}
-              aria-label={danmakuPanelOpen ? "关闭弹幕列表" : "打开弹幕列表"}
-            >
-              {danmakuPanelOpen ? <PanelRightClose size={18} /> : <PanelRightOpen size={18} />}
-            </button>
-            <DanmuSettingsControl
-              settings={room.danmakuSettings}
-              onChange={(patch) => onDanmakuSettingsChange(room.key, patch)}
-              supportsColor={["douyu", "huya", "bilibili"].includes(room.platform)}
-            />
-            {info && info.lines.length > 1 && (
-              <ControlsDropdown
-                label="线路"
-                valueId={activeLine?.id ?? ""}
-                valueLabel={activeLine?.label ?? "线路"}
-                options={info.lines.map((item) => ({ id: item.id, label: item.label }))}
-                onSelect={(lineId) => onLineChange(room.key, lineId)}
-              />
-            )}
-            <ControlsDropdown
-              label="清晰度"
-              valueId={variant?.id ?? ""}
-              valueLabel={variant?.label ?? "清晰度"}
-              options={qualityOptions}
-              onSelect={(qualityId) => onQualityChange(room.key, qualityId)}
-            />
-            <button
-              type="button"
-              className={styles.iconButton}
-              onClick={() => onToggleWindowFullscreen(room.key)}
-              title={windowFullscreen ? "退出应用窗口全屏" : "切换应用窗口全屏"}
-              aria-label={windowFullscreen ? "退出应用窗口全屏" : "切换应用窗口全屏"}
-            >
-              <Monitor size={18} />
-            </button>
-            <button
-              type="button"
-              className={styles.iconButton}
-              onClick={() => void toggleTileFullscreen()}
-              title={tileFullscreen ? "退出直播间全屏" : "直播间全屏"}
-              aria-label={tileFullscreen ? "退出直播间全屏" : "直播间全屏"}
-            >
-              {tileFullscreen ? <Minimize2 size={18} /> : <Maximize size={18} />}
-            </button>
-          </div>
-        </footer>
+        {/* 播放器 chrome（顶部信息栏 + 底部控制条），
+            显隐由 .tile 的 :hover / :focus-within CSS 驱动；
+            鼠标停在卡片上静止 2s 再由宿主加 hidden 淡出。 */}
+        <PlayerChrome
+          platform={room.platform}
+          roomId={room.roomId}
+          nickname={displayName}
+          groupBadge={currentFolder?.name}
+          hidden={chromeHidden}
+          closeSignal={chromeCloseSignal}
+          onMenuOpenChange={setChromeMenuOpen}
+          onClose={() => onRemove(room.key)}
+          closeTitle="从工作台移除（独立录制不受影响）"
+          closeLabel="移除房间"
+          playState={player.state}
+          playDisabled={!info?.isLive}
+          playTitle={player.state === "paused" ? "继续播放" : "暂停"}
+          onTogglePlay={player.togglePlay}
+          onReload={() => setRetryKey((key) => key + 1)}
+          volume={room.volume}
+          volumeMax={2}
+          volumeLabel="房间音量"
+          onVolume={(volume) => {
+            if (volume > 1) player.activateAudioBoost();
+            onVolumeChange(room.key, volume);
+          }}
+          volumeActive={focused}
+          volumeIconByActive
+          volumeButtonTitle={focused ? "关闭本房间声音" : "开启本房间声音"}
+          volumeButtonLabel={focused ? "关闭本房间声音" : "开启本房间声音"}
+          onVolumeButton={() => {
+            if (room.volume > 1) player.activateAudioBoost();
+            onAudioFocus(room.key, true);
+          }}
+          boostWarning={room.volume > 1 && !player.audioBoostSupported}
+          danmuEnabled={room.danmakuEnabled}
+          onToggleDanmu={() => onDanmakuToggle(room.key)}
+          danmuSettings={room.danmakuSettings}
+          onDanmuSettingsChange={(patch) => onDanmakuSettingsChange(room.key, patch)}
+          colorfulSupported={["douyu", "huya", "bilibili"].includes(room.platform)}
+          blockKeywords={blockKeywords}
+          onAddBlockKeyword={onAddBlockKeyword}
+          onRemoveBlockKeyword={onRemoveBlockKeyword}
+          onClearBlockKeywords={onClearBlockKeywords}
+          danmuPanelOpen={danmakuPanelOpen}
+          onToggleDanmuPanel={() => setDanmakuPanelOpen((open) => !open)}
+          lines={info?.lines ?? []}
+          lineId={activeLine?.id ?? ""}
+          onLine={(lineId) => onLineChange(room.key, lineId)}
+          qualities={qualityOptions}
+          qualityId={variant?.id ?? ""}
+          qualityLabel={variant?.label ?? "清晰度"}
+          onQuality={(qualityId) => onQualityChange(room.key, qualityId)}
+          windowFullscreen={windowFullscreen}
+          onToggleWindowFullscreen={() => onToggleWindowFullscreen(room.key)}
+          fullscreen={tileFullscreen}
+          onToggleFullscreen={() => void toggleTileFullscreen()}
+        />
         {RESIZE_HANDLES.map(({ direction, className, label }) => (
           <button
             key={direction}
@@ -910,7 +904,7 @@ export function RoomTile({
                   : "请在设置中开启回溯功能"}
               </div>
             </div>,
-            document.body,
+            portalHost,
           )}
         {groupDialogOpen && (
           <GroupAssignDialog

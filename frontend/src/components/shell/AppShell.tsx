@@ -1,5 +1,4 @@
-import { Outlet, useLocation } from "react-router-dom";
-import { cn } from "@/lib/cn";
+import { Outlet } from "react-router-dom";
 import { WatchTimeTracker } from "@/features/settings/WatchTimeTracker";
 import { usePlayerUi } from "@/state/PlayerUiProvider";
 import { HomeStack } from "./HomeStack";
@@ -14,13 +13,13 @@ import styles from "./AppShell.module.css";
  * 颗粒放在独立图层里，避免给 body 伪元素加负 z-index（WebView2 下表现
  * 不稳定），也不会触发整页重绘。
  *
- * 播放页进入全屏时（hideChrome），外壳只留内容，保证视频铺满。
+ * fix01：只有系统级全屏（DOM Fullscreen / Wails 原生窗口全屏）才隐藏外壳；
+ * 窗口全屏（cssFullscreen）改为只铺满工作台内容区，侧栏 / 顶栏保持可见，
+ * 用户可以在全屏观看时通过侧栏双击 / 拖拽把别的主播加入工作台。
  */
 export function AppShell() {
-  const { pathname } = useLocation();
-  const { isFullscreen } = usePlayerUi();
-  const isPlayer = pathname.startsWith("/player");
-  const hideChrome = isFullscreen;
+  const { nativeFullscreen } = usePlayerUi();
+  const hideChrome = nativeFullscreen;
 
   return (
     <div className={styles.appShell}>
@@ -32,7 +31,7 @@ export function AppShell() {
       {!hideChrome && <Sidebar />}
       <div className={styles.appMain}>
         {!hideChrome && <Navbar />}
-        <main className={cn(styles.appBody, isPlayer && styles.appBodyPlayer)}>
+        <main className={styles.appBody}>
           {/* 平台首页 / 订阅页常驻，用 Activity 在其它路由隐藏，实现 keep-alive */}
           <HomeStack />
           <Outlet />

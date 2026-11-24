@@ -16,17 +16,18 @@ import {
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { createPortal } from "react-dom";
-import { useLocation, useNavigate } from "react-router-dom";
 import { SmoothImage } from "@/components/common/SmoothImage";
 import { RingProgress } from "@/components/ui/RingProgress";
 import { Modal } from "@/components/ui/Modal";
+import { loadAppSettings } from "@/lib/appSettings";
 import { cn } from "@/lib/cn";
-import { useOpenPlayer } from "@/lib/navigation";
+import { useOpenMonitorRoom } from "@/lib/navigation";
 import { api, PLATFORM_LABEL, PLATFORM_LOGO, type LivePlatform } from "@/api";
 import { FOLLOW_ROOM_DRAG_TYPE } from "@/features/multiview/layout";
-import { parseLiveRoomUrl } from "@/features/multiview/roomUrl";
+import { liveRoomShareUrl, parseLiveRoomUrl } from "@/features/multiview/roomUrl";
 import { followKey, useFollow, type FollowRecord } from "@/state/FollowProvider";
 import { useToast } from "@/state/ToastProvider";
+import { sortLiveFirst } from "./followSort";
 import styles from "./FollowsList.module.css";
 
 type StreamerMenuTarget = {
@@ -70,9 +71,7 @@ export function FollowsList({
   collapsed: boolean;
   onToggleCollapsed: () => void;
 }) {
-  const openRoom = useOpenPlayer();
-  const navigate = useNavigate();
-  const location = useLocation();
+  const openMonitor = useOpenMonitorRoom();
   const { toast } = useToast();
   const {
     follows,
@@ -88,6 +87,7 @@ export function FollowsList({
     deleteFolder,
     toggleFolder,
     reorderTopLevel,
+    reorderWithinFolder,
     reorderFolders,
     refreshStatuses,
     refreshing,
@@ -104,6 +104,8 @@ export function FollowsList({
   const [dragOverKey, setDragOverKey] = useState<string | null>(null);
   const [platformFilter, setPlatformFilter] = useState<"ALL" | LivePlatform>("ALL");
   const [onlineOnly, setOnlineOnly] = useState(false);
+  /** 全局设置「直播中优先」：开启时显示层自动排序，并停用拖拽排序 */
+  const [livePriority, setLivePriority] = useState(() => loadAppSettings().livePriorityEnabled);
   const [selectedKeys, setSelectedKeys] = useState<Set<string>>(() => new Set());
   const [searchInput, setSearchInput] = useState("");
   const [searchKeyword, setSearchKeyword] = useState("");
@@ -119,11 +121,6 @@ export function FollowsList({
     top: number;
   } | null>(null);
   const collapsedCloseTimer = useRef<number | null>(null);
-  const rowClickTimerRef = useRef<{
-    key: string;
-    record: FollowRecord;
-    timer: number;
-  } | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
   const addRoomInputRef = useRef<HTMLInputElement | null>(null);
   const addRoomTriggerRef = useRef<HTMLButtonElement | null>(null);
@@ -175,6 +172,16 @@ export function FollowsList({
     if (dialog) inputRef.current?.focus();
   }, [dialog]);
 
+  /* 设置面板切换「直播中优先」时即时生效（与 dtv:live-notify 同一套事件模式） */
+  useEffect(() => {
+    const onLivePriority = (event: Event) => {
+      const detail = (event as CustomEvent<{ enabled?: boolean }>).detail;
+      if (typeof detail?.enabled === "boolean") setLivePriority(detail.enabled);
+    };
+    window.addEventListener("dtv:live-priority", onLivePriority);
+    return () => window.removeEventListener("dtv:live-priority", onLivePriority);
+  }, []);
+
   useEffect(() => {
     if (!addRoomOpen) return;
     addRoomInputRef.current?.focus();
@@ -221,9 +228,6 @@ export function FollowsList({
     return () => {
       if (collapsedCloseTimer.current != null) {
         window.clearTimeout(collapsedCloseTimer.current);
-      }
-      if (rowClickTimerRef.current != null) {
-        window.clearTimeout(rowClickTimerRef.current.timer);
       }
     };
   }, []);
@@ -300,43 +304,24 @@ export function FollowsList({
     setDialog(null);
   }, [createFolder, deleteFolder, dialog, renameFolder]);
 
-  const openPlayer = useCallback(
-    (record: FollowRecord) => {
-      setCollapsedFolder(null);
-      // 已经在看 A 房间时，B 会替换掉 A 的历史记录：旧房间彻底销毁，
-      // 从 B 退出时回到列表而不是自动重新进入 A（见 lib/navigation.ts）。
-      openRoom(record.platform, record.id);
-    },
-    [openRoom],
-  );
-
   const openMonitorRoom = (record: FollowRecord) => {
     setCollapsedFolder(null);
-    navigate("/monitor", {
-      replace: location.pathname === "/monitor",
-      state: { dtvMonitorRoom: { platform: record.platform, roomId: record.id } },
-    });
+    openMonitor(record.platform, record.id);
   };
 
-  const handleRowClick = (record: FollowRecord) => {
-    const key = followKey(record.platform, record.id);
-    const pending = rowClickTimerRef.current;
-    if (pending?.key === key) {
-      window.clearTimeout(pending.timer);
-      rowClickTimerRef.current = null;
-      return;
-    }
-    if (pending) {
-      window.clearTimeout(pending.timer);
-      rowClickTimerRef.current = null;
-      openPlayer(pending.record);
-    }
-    const timer = window.setTimeout(() => {
-      if (rowClickTimerRef.current?.timer === timer) rowClickTimerRef.current = null;
-      openPlayer(record);
-    }, 240);
-    rowClickTimerRef.current = { key, record, timer };
-  };
+  /** 右键「分享主播链接」：复制规范直播间 URL，可直接粘贴回添加框。 */
+  const shareStreamerLink = useCallback(
+    async (record: FollowRecord) => {
+      const url = liveRoomShareUrl(record.platform, record.id);
+      try {
+        await navigator.clipboard.writeText(url);
+        toast(`已复制 ${record.nickname} 的直播间链接`, "success");
+      } catch {
+        toast("复制失败，请检查系统剪贴板权限", "error");
+      }
+    },
+    [toast],
+  );
 
   const handleRefresh = useCallback(async () => {
     // 启动时的自动刷新也走同一条链路，这里顺手挡掉重复点击
@@ -460,25 +445,33 @@ export function FollowsList({
 
   const onRowDragOver = useCallback(
     (event: React.DragEvent, record: FollowRecord, targetFolderId?: string) => {
-      if (targetFolderId) return;
+      // todo05：同文件夹内部允许拖拽排序；跨文件夹拖到成员行上不接收
+      //（应该拖到文件夹标题行，走 moveToFolder）。
+      if (targetFolderId && targetFolderId !== dragSourceFolder) return;
       if (dragType !== "streamer" || !dragKey) return;
       const key = followKey(record.platform, record.id);
       if (key === dragKey) return;
+      // 「直播中优先」开启时顺序由状态决定，纯排序拖拽不再接收
+      //（从文件夹拖到顶层行仍是"移出文件夹"，保留）。
+      const pureReorder = targetFolderId
+        ? targetFolderId === dragSourceFolder
+        : !dragSourceFolder;
+      if (livePriority && pureReorder) return;
       event.preventDefault();
       event.dataTransfer.dropEffect = "move";
       setDragOverFolder(null);
       setDragOverKey(key);
     },
-    [dragKey, dragType],
+    [dragKey, dragSourceFolder, dragType, livePriority],
   );
 
   const onRowDragLeave = useCallback(
     (_event: React.DragEvent, record: FollowRecord, targetFolderId?: string) => {
-      if (targetFolderId) return;
+      if (targetFolderId && targetFolderId !== dragSourceFolder) return;
       const key = followKey(record.platform, record.id);
       if (dragOverKey === key) setDragOverKey(null);
     },
-    [dragOverKey],
+    [dragOverKey, dragSourceFolder],
   );
 
   const onRowDrop = useCallback(
@@ -488,7 +481,15 @@ export function FollowsList({
         event.preventDefault();
         event.stopPropagation();
         if (dragType === "streamer" && dragKey) {
-          moveToFolder(dragKey, targetFolderId);
+          // todo05：同文件夹内部 → 排序；跨文件夹 → 移动进该文件夹。
+          // 「直播中优先」开启时不做手动排序（显示顺序由直播状态决定）。
+          if (dragSourceFolder === targetFolderId) {
+            if (!livePriority) {
+              reorderWithinFolder(targetFolderId, dragKey, followKey(record.platform, record.id));
+            }
+          } else {
+            moveToFolder(dragKey, targetFolderId);
+          }
         }
         clearDrag();
         return;
@@ -500,8 +501,8 @@ export function FollowsList({
       if (dragType === "streamer" && dragKey) {
         if (dragSourceFolder) {
           removeFromFolder(dragKey, dragSourceFolder);
-          reorderTopLevel(dragKey, targetKey);
-        } else if (dragKey !== targetKey) {
+          if (!livePriority) reorderTopLevel(dragKey, targetKey);
+        } else if (dragKey !== targetKey && !livePriority) {
           reorderTopLevel(dragKey, targetKey);
         }
       }
@@ -512,9 +513,11 @@ export function FollowsList({
       dragKey,
       dragSourceFolder,
       dragType,
+      livePriority,
       moveToFolder,
       removeFromFolder,
       reorderTopLevel,
+      reorderWithinFolder,
     ],
   );
 
@@ -557,12 +560,13 @@ export function FollowsList({
       event.stopPropagation();
       if (dragType === "folder" && dragFolderId && dragFolderId !== folderId) {
         reorderFolders(dragFolderId, folderId);
-      } else if (dragType === "streamer" && dragKey) {
+      } else if (dragType === "streamer" && dragKey && dragSourceFolder !== folderId) {
+        // 同文件夹内拖到标题行是无效操作，不要触发 moveToFolder 的自动展开副作用。
         moveToFolder(dragKey, folderId);
       }
       clearDrag();
     },
-    [clearDrag, dragFolderId, dragKey, dragType, moveToFolder, reorderFolders],
+    [clearDrag, dragFolderId, dragKey, dragSourceFolder, dragType, moveToFolder, reorderFolders],
   );
 
   /* 拖到文件夹以外的空白区域 = 从文件夹移出 */
@@ -587,20 +591,28 @@ export function FollowsList({
           .includes(searchKeyword)),
     [onlineOnly, platformFilter, searchKeyword],
   );
-  const visibleTopLevel = useMemo(() => topLevel.filter(matchesFilter), [matchesFilter, topLevel]);
+  /* 「直播中优先」只作用于显示层：存储里的手动顺序原样保留，
+   * 关闭开关后立刻恢复用户自己的排序。 */
+  const visibleTopLevel = useMemo(() => {
+    const filtered = topLevel.filter(matchesFilter);
+    return livePriority ? sortLiveFirst(filtered) : filtered;
+  }, [livePriority, matchesFilter, topLevel]);
   const visibleFolders = useMemo(
     () =>
       folders
-        .map((folder) => ({
-          ...folder,
-          records: folder.records.filter(matchesFilter),
-        }))
+        .map((folder) => {
+          const records = folder.records.filter(matchesFilter);
+          return {
+            ...folder,
+            records: livePriority ? sortLiveFirst(records) : records,
+          };
+        })
         .filter(
           (folder) =>
             folder.records.length > 0 ||
             (platformFilter === "ALL" && !onlineOnly && !searchKeyword),
         ),
-    [folders, matchesFilter, onlineOnly, platformFilter, searchKeyword],
+    [folders, livePriority, matchesFilter, onlineOnly, platformFilter, searchKeyword],
   );
   const visibleCount =
     visibleTopLevel.length +
@@ -681,19 +693,18 @@ export function FollowsList({
             if (e.ctrlKey || e.metaKey) {
               e.preventDefault();
               toggleSelected(key);
-              return;
             }
-            if (opts.plain) openPlayer(record);
-            else handleRowClick(record);
+            // 单击不再打开直播间：打开入口只保留双击（加入工作台）、
+            // 拖拽到工作台和右键菜单。
           }}
-          onDoubleClick={opts.plain ? undefined : () => openMonitorRoom(record)}
+          onDoubleClick={() => openMonitorRoom(record)}
           onContextMenu={(e) => openStreamerMenu(e, record)}
           role="button"
           tabIndex={0}
           onKeyDown={(e) => {
             if (e.key === "Enter" || e.key === " ") {
               e.preventDefault();
-              openPlayer(record);
+              openMonitorRoom(record);
             }
           }}
           title={compact ? `${record.nickname}｜${record.title}` : record.title || record.nickname}
@@ -1085,8 +1096,11 @@ export function FollowsList({
       {collapsed &&
         collapsedFolder &&
         (() => {
-          const folder = folders.find((item) => item.id === collapsedFolder.folderId);
-          if (!folder) return null;
+          const rawFolder = folders.find((item) => item.id === collapsedFolder.folderId);
+          if (!rawFolder) return null;
+          const folder = livePriority
+            ? { ...rawFolder, records: sortLiveFirst(rawFolder.records) }
+            : rawFolder;
           const online = folder.records.filter((record) => record.isLive).length;
           return createPortal(
             <div
@@ -1214,6 +1228,18 @@ export function FollowsList({
                     <span className={styles.menuText}>移出文件夹</span>
                   </button>
                 )}
+
+                <button
+                  type="button"
+                  className={styles.menuItem}
+                  onClick={() => {
+                    void shareStreamerLink(menuTarget.record);
+                    setMenu(null);
+                  }}
+                >
+                  <Link2 size={14} strokeWidth={2.2} />
+                  <span className={styles.menuText}>分享主播链接</span>
+                </button>
 
                 <div className={styles.menuSep} />
                 <button

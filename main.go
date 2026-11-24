@@ -293,7 +293,10 @@ func main() {
 	// resize/move 时先抓一份普通窗口 bounds，再防抖写盘。这样用户“拖完立刻
 	// 最小化/关闭”也不会丢掉刚调整的尺寸。
 	captureNormalBounds := func() {
-		if mainWindow == nil || mainWindow.IsMinimised() || mainWindow.IsMaximised() {
+		// 原生全屏时窗口尺寸是整块屏幕，且 IsMaximised() 为 false（全屏会
+		// 剥掉 WS_MAXIMIZE 样式位）——不挡住的话会把屏幕尺寸当成"普通窗口
+		// bounds"存下来，下次启动就像被自动最大化且无法还原（todo05）。
+		if mainWindow == nil || mainWindow.IsMinimised() || mainWindow.IsMaximised() || mainWindow.IsFullscreen() {
 			return
 		}
 		x, y := mainWindow.Position()
@@ -314,8 +317,9 @@ func main() {
 		}
 
 		// 最小化时 Windows 会给出 -18285/-32000 之类的哨兵坐标，不能读。
-		// 直接保存最后一次捕获到的普通窗口 bounds。
-		if mainWindow.IsMinimised() {
+		// 原生全屏时读到的是整块屏幕的尺寸，同样不能当成普通窗口状态。
+		// 两种情况都直接保存最后一次捕获到的普通窗口 bounds。
+		if mainWindow.IsMinimised() || mainWindow.IsFullscreen() {
 			if validWindowBounds(state.X, state.Y, state.Width, state.Height) {
 				saveWindowState(state)
 			}

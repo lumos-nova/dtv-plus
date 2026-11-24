@@ -76,18 +76,6 @@
   }
 }
 
-/* 播放页：播放器自己铺满，不再额外留底部空隙 */
-.appBodyPlayer {
-  padding: 0 14px;
-  overflow: hidden;
-}
-
-@media (max-width: 1240px) {
-  .appBodyPlayer {
-    padding: 0 10px;
-  }
-}
-
 @media (max-width: 1360px) {
   .appMain {
     min-width: 880px;

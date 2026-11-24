@@ -12,8 +12,9 @@ interface DanmuBlockControlProps {
   onAdd: (keyword: string) => void;
   onRemove: (keyword: string) => void;
   onClear: () => void;
-  /** 打开/关闭弹层时通知控制栏（弹层打开时不要自动隐藏 chrome） */
-  onOpenChange?: (open: boolean) => void;
+  /** 打开/关闭弹层时通知控制栏（弹层打开时不要自动隐藏 chrome）。
+   * 本控件只有点击打开，persistent 恒等于 open。 */
+  onOpenChange?: (open: boolean, persistent: boolean) => void;
 }
 
 /**
@@ -46,7 +47,7 @@ export function DanmuBlockControl({
   const setOpenState = useCallback(
     (next: boolean) => {
       setOpen(next);
-      onOpenChange?.(next);
+      onOpenChange?.(next, next);
       if (!next) setDraft("");
     },
     [onOpenChange],

@@ -101,7 +101,7 @@ function readVolume(): number {
  * xgplayer 实例封装。
  *
  * 这里只做一件事：按 source 创建/销毁实例，并把状态回调出去。
- * UI 控制条是自己的 React 组件（见 PlayerControls），不往 xgplayer 里注册插件。
+ * UI 控制条是自己的 React 组件（见 PlayerChrome），不往 xgplayer 里注册插件。
  */
 export function useXgPlayer(
   containerRef: React.RefObject<HTMLDivElement | null>,

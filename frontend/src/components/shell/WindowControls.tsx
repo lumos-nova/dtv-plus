@@ -1,5 +1,14 @@
 import { useEffect, useState } from "react";
-import { closeWindow, isMacOS, isMaximised, minimiseWindow, toggleMaximiseWindow, useDesktopOS } from "@/lib/window";
+import {
+  closeWindow,
+  exitWindowFullscreen,
+  isMacOS,
+  isMaximised,
+  isWindowFullscreen,
+  minimiseWindow,
+  toggleMaximiseWindow,
+  useDesktopOS,
+} from "@/lib/window";
 import styles from "./WindowControls.module.css";
 
 /**
@@ -31,8 +40,18 @@ export function WindowControls({ className }: { className?: string }) {
   if (os === "darwin" || isMacOS()) return null;
 
   const onToggleMaximise = () => {
-    void toggleMaximiseWindow();
-    setMaximised((v) => !v);
+    // todo05：原生全屏时窗口是 WS_POPUP，直接 ToggleMaximise 会把
+    // 全屏窗口"最大化"成坏状态且无法还原。全屏下先退出全屏，
+    // 再按真实状态同步图标（不做乐观翻转）。
+    void isWindowFullscreen().then(async (fullscreen) => {
+      if (fullscreen) {
+        await exitWindowFullscreen();
+        setMaximised(await isMaximised());
+        return;
+      }
+      await toggleMaximiseWindow();
+      setMaximised(await isMaximised());
+    });
   };
 
   return (

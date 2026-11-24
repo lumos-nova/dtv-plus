@@ -20,6 +20,8 @@ export interface AppSettings {
   watchedSeconds: number;
   /** 开播提醒：关注主播从下播变为开播/轮播时弹出提醒 */
   liveNotifyEnabled: boolean;
+  /** 直播中优先：关注列表把直播中的主播排在最前（关闭时按用户手动排序） */
+  livePriorityEnabled: boolean;
 }
 
 const KEY = "dtv_app_settings_v1";
@@ -43,6 +45,8 @@ export function loadAppSettings(): AppSettings {
     watchedSeconds: typeof raw?.watchedSeconds === "number" ? Math.max(0, raw.watchedSeconds) : 0,
     liveNotifyEnabled:
       typeof raw?.liveNotifyEnabled === "boolean" ? raw.liveNotifyEnabled : true,
+    livePriorityEnabled:
+      typeof raw?.livePriorityEnabled === "boolean" ? raw.livePriorityEnabled : true,
   };
 }
 
@@ -57,5 +61,6 @@ export function saveAppSettings(settings: AppSettings) {
     restMinutes: settings.restMinutes,
     watchedSeconds: settings.watchedSeconds,
     liveNotifyEnabled: settings.liveNotifyEnabled,
+    livePriorityEnabled: settings.livePriorityEnabled,
   });
 }

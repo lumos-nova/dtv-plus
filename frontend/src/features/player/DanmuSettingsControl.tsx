@@ -24,7 +24,10 @@ interface DanmuSettingsControlProps {
   settings: DanmuUserSettings;
   onChange: (patch: Partial<DanmuUserSettings>) => void;
   supportsColor?: boolean;
-  onOpenChange?: (open: boolean) => void;
+  /** persistent=true 表示点击打开（宿主保持控制栏常显）；悬停展开不算。 */
+  onOpenChange?: (open: boolean, persistent: boolean) => void;
+  /** 宿主空闲隐藏时递增：收掉悬停展开的面板。 */
+  closeSignal?: number;
 }
 
 function rangeFill(value: number, min: number, max: number): string {
@@ -43,11 +46,14 @@ export function DanmuSettingsControl({
   onChange,
   supportsColor = false,
   onOpenChange,
+  closeSignal,
 }: DanmuSettingsControlProps) {
   const [open, setOpen] = useState(false);
   const wrapRef = useRef<HTMLDivElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
   const closeTimerRef = useRef<number | null>(null);
+  /** 当前这次打开是否由悬停触发（点击打开会置回 false） */
+  const hoverOpenedRef = useRef(false);
   const portalHost = usePortalHost();
   const [pos, setPos] = useState<{
     left: number;
@@ -59,7 +65,7 @@ export function DanmuSettingsControl({
   const setOpenState = useCallback(
     (next: boolean) => {
       setOpen(next);
-      onOpenChange?.(next);
+      onOpenChange?.(next, next && !hoverOpenedRef.current);
     },
     [onOpenChange],
   );
@@ -100,6 +106,18 @@ export function DanmuSettingsControl({
     return () => cancelClose();
   }, [cancelClose]);
 
+  /* 宿主进入空闲隐藏：只收掉悬停展开的面板，点击打开的保留。 */
+  const lastCloseSignalRef = useRef(closeSignal ?? 0);
+  useEffect(() => {
+    const signal = closeSignal ?? 0;
+    if (signal === lastCloseSignalRef.current) return;
+    lastCloseSignalRef.current = signal;
+    if (hoverOpenedRef.current) {
+      cancelClose();
+      setOpenState(false);
+    }
+  }, [closeSignal, cancelClose, setOpenState]);
+
   useEffect(() => {
     if (!open) return;
     const onDown = (event: MouseEvent) => {
@@ -127,9 +145,13 @@ export function DanmuSettingsControl({
       <button
         type="button"
         className={styles.trigger}
-        onClick={() => setOpenState(!open)}
+        onClick={() => {
+          hoverOpenedRef.current = false;
+          setOpenState(!open);
+        }}
         onMouseEnter={() => {
           cancelClose();
+          hoverOpenedRef.current = true;
           setOpenState(true);
         }}
         onMouseLeave={scheduleClose}

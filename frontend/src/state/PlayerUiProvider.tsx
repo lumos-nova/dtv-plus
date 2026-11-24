@@ -8,20 +8,21 @@ import { createContext, useContext, useMemo, useState, type ReactNode } from "re
  * 主播信息只保留在播放器自己的顶栏里。
  *
  * 现在这里有两种"全屏"：
- *   - nativeFullscreen：DOM Fullscreen API / 系统级全屏，会盖住任务栏；
- *   - cssFullscreen：西瓜播放器 cssFullscreen 那种样式全屏 —— 播放器铺满
- *     应用窗口（侧栏/顶栏让位），操作系统窗口不变，任务栏照常可见。
- * 两者都会让外壳隐藏 chrome，所以再派生出 isFullscreen 给布局用。
+ *   - nativeFullscreen：DOM Fullscreen API / 系统级全屏，会盖住任务栏，
+ *     外壳（侧栏/顶栏）让位；
+ *   - cssFullscreen：fix01 起改为"工作台内全屏" —— 播放器只铺满内容区，
+ *     侧栏/顶栏保持可见，操作系统窗口不变，也不会自动最大化。
+ * isFullscreen 仍表示"任一全屏"，供播放器自身的浮层布局使用。
  */
 
 interface PlayerUiContextValue {
   /** 原生全屏（DOM Fullscreen API / Wails 窗口全屏） */
   nativeFullscreen: boolean;
   setNativeFullscreen: (v: boolean) => void;
-  /** 样式全屏（铺满应用窗口，任务栏可见） */
+  /** 工作台内全屏（铺满内容区，侧栏/顶栏可见） */
   cssFullscreen: boolean;
   setCssFullscreen: (v: boolean) => void;
-  /** 任一全屏 —— 侧栏/顶栏让位、弹幕面板隐藏 */
+  /** 任一全屏 —— 播放器浮层布局（弹幕面板改浮层等） */
   isFullscreen: boolean;
 }
 

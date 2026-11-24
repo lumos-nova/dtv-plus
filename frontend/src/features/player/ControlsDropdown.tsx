@@ -16,6 +16,7 @@ export function ControlsDropdown({
   onSelect,
   onOpenChange,
   openOnHover = true,
+  closeSignal,
   className,
   controlClassName,
   dropdownClassName,
@@ -26,8 +27,12 @@ export function ControlsDropdown({
   valueLabel: string;
   options: ControlsDropdownOption[];
   onSelect: (id: string) => void;
-  onOpenChange?: (open: boolean) => void;
+  /** persistent=true 表示点击/键盘打开（宿主据此保持控制栏常显）；
+   * 悬停展开不算 —— 否则鼠标停在触发器上时控制栏永远不自动隐藏。 */
+  onOpenChange?: (open: boolean, persistent: boolean) => void;
   openOnHover?: boolean;
+  /** 宿主空闲隐藏时递增：把悬停展开的下拉一并收掉。 */
+  closeSignal?: number;
   className?: string;
   controlClassName?: string;
   dropdownClassName?: string;
@@ -36,6 +41,8 @@ export function ControlsDropdown({
   const [open, setOpen] = useState(false);
   const wrapRef = useRef<HTMLDivElement>(null);
   const closeTimerRef = useRef<number | null>(null);
+  /** 当前这次打开是否由悬停触发（点击打开会置回 false） */
+  const hoverOpenedRef = useRef(false);
 
   const cancelClose = useCallback(() => {
     if (closeTimerRef.current != null) {
@@ -56,8 +63,20 @@ export function ControlsDropdown({
     return () => cancelClose();
   }, [cancelClose]);
 
+  /* 宿主进入空闲隐藏：只收掉悬停展开的下拉，点击打开的保留。 */
+  const lastCloseSignalRef = useRef(closeSignal ?? 0);
   useEffect(() => {
-    onOpenChange?.(open);
+    const signal = closeSignal ?? 0;
+    if (signal === lastCloseSignalRef.current) return;
+    lastCloseSignalRef.current = signal;
+    if (hoverOpenedRef.current) {
+      cancelClose();
+      setOpen(false);
+    }
+  }, [closeSignal, cancelClose]);
+
+  useEffect(() => {
+    onOpenChange?.(open, open && !hoverOpenedRef.current);
     if (!open) return;
     const onDown = (event: MouseEvent) => {
       if (!wrapRef.current?.contains(event.target as Node)) setOpen(false);
@@ -88,6 +107,7 @@ export function ControlsDropdown({
       onMouseEnter={() => {
         if (!openOnHover) return;
         cancelClose();
+        hoverOpenedRef.current = true;
         setOpen(true);
       }}
       onMouseLeave={() => {
@@ -98,7 +118,10 @@ export function ControlsDropdown({
         type="button"
         className={cn(styles.controlItem, controlClassName, open && styles.menuOpen)}
         disabled={disabled}
-        onClick={() => setOpen((value) => !value)}
+        onClick={() => {
+          hoverOpenedRef.current = false;
+          setOpen((value) => !value);
+        }}
         aria-label={`${label}：${valueLabel}`}
         aria-haspopup="menu"
         aria-expanded={open}

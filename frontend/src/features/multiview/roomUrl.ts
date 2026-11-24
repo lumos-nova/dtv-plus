@@ -12,6 +12,19 @@ const PLATFORM_HOSTS: Record<LivePlatform, ReadonlySet<string>> = {
   bilibili: new Set(["live.bilibili.com"]),
 };
 
+/** 分享用的规范直播间链接（parseLiveRoomUrl 的逆操作）。 */
+const PLATFORM_SHARE_ORIGIN: Record<LivePlatform, string> = {
+  douyu: "https://www.douyu.com",
+  huya: "https://www.huya.com",
+  douyin: "https://live.douyin.com",
+  bilibili: "https://live.bilibili.com",
+};
+
+/** 生成可直接粘贴回添加框 / 发给别人的直播间链接。 */
+export function liveRoomShareUrl(platform: LivePlatform, roomId: string): string {
+  return `${PLATFORM_SHARE_ORIGIN[platform]}/${encodeURIComponent(roomId)}`;
+}
+
 function platformForHost(host: string): LivePlatform | null {
   for (const [platform, hosts] of Object.entries(PLATFORM_HOSTS) as [
     LivePlatform,

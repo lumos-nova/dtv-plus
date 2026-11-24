@@ -6,7 +6,7 @@ import { SmoothImage } from "@/components/common/SmoothImage";
 import { STREAMER_COVER_WIDTH } from "@/lib/imageProxy";
 import { cn } from "@/lib/cn";
 import { formatViewers } from "@/lib/format";
-import { useOpenPlayer } from "@/lib/navigation";
+import { useOpenMonitorRoom } from "@/lib/navigation";
 import styles from "./StreamerCard.module.css";
 
 interface StreamerCardProps {
@@ -19,9 +19,9 @@ interface StreamerCardProps {
   hideCategory?: boolean;
 }
 
-/** 卡片 hover/focus 时预取播放页 chunk（P-12），点进去时几乎无等待。 */
-function prefetchPlayer() {
-  void import("@/screens/PlayerPage").catch(() => undefined);
+/** 卡片 hover/focus 时预取监看页 chunk（P-12），点进去时几乎无等待。 */
+function prefetchMonitor() {
+  void import("@/screens/MonitorPage").catch(() => undefined);
 }
 
 /**
@@ -39,11 +39,12 @@ export function StreamerCard({
   priority = false,
   hideCategory = false,
 }: StreamerCardProps) {
-  const openPlayer = useOpenPlayer();
+  const openMonitorRoom = useOpenMonitorRoom();
 
+  // todo05：平台页卡片直接在多平台监看页打开，而不是单房间播放页。
   const open = useCallback(() => {
-    openPlayer(streamer.platform, streamer.id);
-  }, [openPlayer, streamer.id, streamer.platform]);
+    openMonitorRoom(streamer.platform, streamer.id);
+  }, [openMonitorRoom, streamer.id, streamer.platform]);
 
   return (
     <Card className={styles.card}>
@@ -52,8 +53,8 @@ export function StreamerCard({
           type="button"
           className={styles.coverBtn}
           onClick={open}
-          onPointerEnter={prefetchPlayer}
-          onFocus={prefetchPlayer}
+          onPointerEnter={prefetchMonitor}
+          onFocus={prefetchMonitor}
           aria-label={`进入 ${streamer.nickname} 的直播间`}
         >
           <SmoothImage

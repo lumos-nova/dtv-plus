@@ -1,4 +1,4 @@
-import { BellRing, FolderOpen, HardDrive, Save } from "lucide-react";
+import { ArrowDownUp, BellRing, FolderOpen, HardDrive, Save } from "lucide-react";
 import { useEffect, useState } from "react";
 import * as StorageSettings from "../../../bindings/dtv/internal/services/storagesettingsservice";
 import type { StorageDirs } from "../../../bindings/dtv/internal/appdirs/models";
@@ -54,6 +54,11 @@ export function SettingsModal({ onClose }: { onClose: () => void }) {
     if (typeof next.liveNotifyEnabled === "boolean") {
       window.dispatchEvent(
         new CustomEvent("dtv:live-notify", { detail: { enabled: next.liveNotifyEnabled } }),
+      );
+    }
+    if (typeof next.livePriorityEnabled === "boolean") {
+      window.dispatchEvent(
+        new CustomEvent("dtv:live-priority", { detail: { enabled: next.livePriorityEnabled } }),
       );
     }
   };
@@ -144,6 +149,22 @@ export function SettingsModal({ onClose }: { onClose: () => void }) {
           <p className={styles.hint}>
             <BellRing size={14} />
             每分钟检查一次关注列表；主播从下播变为开播（或开始轮播）时弹出提醒
+          </p>
+        </section>
+
+        <section className={styles.section}>
+          <h3>关注列表</h3>
+          <label className={styles.reminderToggle}>
+            <span>直播中优先</span>
+            <input
+              type="checkbox"
+              checked={settings.livePriorityEnabled}
+              onChange={(event) => patch({ livePriorityEnabled: event.target.checked })}
+            />
+          </label>
+          <p className={styles.hint}>
+            <ArrowDownUp size={14} />
+            开启后直播中的主播排在最前（轮播其次、未开播最后）；关闭后可拖拽任意排序
           </p>
         </section>
 

@@ -29,13 +29,7 @@ import { useMonitorWorkspace } from "@/features/multiview/useMonitorWorkspace";
 import { loadAppSettings, normalizeReplaySeconds } from "@/lib/appSettings";
 import { cn } from "@/lib/cn";
 import { useToast } from "@/state/ToastProvider";
-import {
-  exitWindowFullscreen,
-  isWailsRuntime,
-  isWindowFullscreen,
-  onWindowFullscreenChange,
-  toggleWindowFullscreen,
-} from "@/lib/window";
+import { isWailsRuntime } from "@/lib/window";
 import styles from "./MonitorPage.module.css";
 
 const MAX_ROOMS = 16;
@@ -88,13 +82,6 @@ export function MonitorPage() {
     });
   }, []);
 
-  useEffect(() => {
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setSelectedRoomKeys(new Set());
-    };
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, []);
   const gridRef = useRef<HTMLDivElement>(null);
   const previousAudioFocusRef = useRef<string[] | null>(null);
   const handledMonitorRequestRef = useRef<string | null>(null);
@@ -199,6 +186,36 @@ export function MonitorPage() {
     };
   }, [setWorkspace]);
 
+  /**
+   * 退出工作台内全屏并恢复进入前的音频焦点。
+   * 纯 CSS 展开（不再动操作系统窗口），没有原生全屏事件可依赖，
+   * 所有退出路径（再点按钮 / 移除房间 / 关闭全部 / 加新房间 / Esc）都直接走这里。
+   */
+  const exitWindowFullscreenForRoom = useCallback(() => {
+    const previousAudioFocus = previousAudioFocusRef.current;
+    previousAudioFocusRef.current = null;
+    setWindowFullscreenRoomKey(null);
+    if (previousAudioFocus) {
+      setWorkspace((previous) => ({
+        ...previous,
+        audioFocusKeys: previousAudioFocus.filter((key) =>
+          previous.rooms.some((room) => room.key === key),
+        ),
+      }));
+    }
+  }, [setWorkspace]);
+
+  // Esc：清空多选；处于工作台内全屏时同时退出（与播放页 Esc 退全屏的习惯一致）
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      setSelectedRoomKeys(new Set());
+      exitWindowFullscreenForRoom();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [exitWindowFullscreenForRoom]);
+
   useEffect(() => {
     const closeAllRooms = () => {
       const selected = selectedRoomKeys;
@@ -215,32 +232,11 @@ export function MonitorPage() {
       });
       setNotice(selected.size > 0 ? `已关闭 ${selected.size} 个选中直播间` : "已关闭所有直播间");
       setSelectedRoomKeys(new Set());
-      if (previousAudioFocusRef.current) void exitWindowFullscreen();
-      previousAudioFocusRef.current = null;
-      setWindowFullscreenRoomKey(null);
+      exitWindowFullscreenForRoom();
     };
     window.addEventListener("dtv:monitor-close-all", closeAllRooms);
     return () => window.removeEventListener("dtv:monitor-close-all", closeAllRooms);
-  }, [setWorkspace, selectedRoomKeys]);
-
-  useEffect(
-    () =>
-      onWindowFullscreenChange(() => {
-        void isWindowFullscreen().then((fullscreen) => {
-          if (fullscreen || previousAudioFocusRef.current === null) return;
-          const previousAudioFocus = previousAudioFocusRef.current;
-          previousAudioFocusRef.current = null;
-          setWindowFullscreenRoomKey(null);
-          setWorkspace((previous) => ({
-            ...previous,
-            audioFocusKeys: previousAudioFocus.filter((key) =>
-              previous.rooms.some((room) => room.key === key),
-            ),
-          }));
-        });
-      }),
-    [setWorkspace],
-  );
+  }, [setWorkspace, selectedRoomKeys, exitWindowFullscreenForRoom]);
 
   const addRoom = (platform: LivePlatform, rawRoomId: string) => {
     const roomId = rawRoomId.replace(/^0+(?=\d)/, "");
@@ -287,6 +283,11 @@ export function MonitorPage() {
             : room;
         })
       : nextRooms;
+    // todo05：已有房间处于全屏时，先退出全屏再加新房间，否则新房间
+    // 会被藏在全屏画面后面。工作台内全屏直接恢复音频焦点；DOM 单卡全屏
+    // 直接退出即可。
+    if (windowFullscreenRoomKey) exitWindowFullscreenForRoom();
+    if (document.fullscreenElement) void document.exitFullscreen().catch(() => undefined);
     setWorkspace((previous) => ({
       ...previous,
       rooms: positionedRooms,
@@ -499,17 +500,18 @@ export function MonitorPage() {
     clearError();
   };
 
+  /* 工作台内全屏：只让卡片铺满工作台内容区（RoomTile 的 CSS 展开），
+   * 绝不触碰操作系统窗口 —— 不最大化、不盖任务栏。
+   * 真正的系统级全屏是旁边的「直播间全屏」按钮（DOM Fullscreen API）。 */
   const toggleWindowFullscreenForRoom = (key: string) => {
-    if (!isWailsRuntime()) return;
     if (windowFullscreenRoomKey === key) {
-      void toggleWindowFullscreen();
+      exitWindowFullscreenForRoom();
       return;
     }
     if (windowFullscreenRoomKey) return;
     previousAudioFocusRef.current = [...audioFocusKeys];
     setWindowFullscreenRoomKey(key);
     setWorkspace((previous) => ({ ...previous, audioFocusKeys: [key] }));
-    void toggleWindowFullscreen();
   };
 
   const handleResize = (key: string, size: MonitorTileSize, position?: GridPosition) => {
@@ -577,7 +579,7 @@ export function MonitorPage() {
   };
 
   const removeRoom = (key: string) => {
-    if (windowFullscreenRoomKey === key) void exitWindowFullscreen();
+    if (windowFullscreenRoomKey === key) exitWindowFullscreenForRoom();
     setWorkspace((previous) => ({
       ...previous,
       rooms: previous.rooms.filter((room) => room.key !== key),

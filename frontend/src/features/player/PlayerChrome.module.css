@@ -1,0 +1,411 @@
+/* 直播间播放器 chrome（顶部信息栏 + 底部控制条）。
+ *
+ * 由工作台卡片（RoomTile）使用（单房间播放页已移除）。
+ * 显隐机制由宿主决定：
+ *  - CSS :hover / :focus-within（见 RoomTile.module.css）；
+ *  - 悬停静止 2s 的空闲隐藏：宿主给 header/footer 加 .hidden 类
+ *   （opacity:0 + pointer-events:none，见文件末尾），移动鼠标立即唤回。
+ *
+ * 注意：这里刻意不用 backdrop-filter / visibility:hidden ——
+ * WebView2 在视频被提升成 DirectComposition 硬件叠加平面时会把之后
+ * 唤回的 chrome 压在平面之下（全屏无按键的根因），宿主舞台里另有
+ * 常驻 1px backdrop-filter 合成哨兵兜底。 */
+
+.header,
+.footer {
+  position: absolute;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  color: #fff;
+  background: linear-gradient(180deg, rgba(0, 0, 0, 0.78), rgba(0, 0, 0, 0.36));
+  opacity: 0.8;
+  transition: opacity 140ms ease;
+}
+
+.header {
+  inset: 0 0 auto;
+  min-height: 42px;
+  padding: 5px 7px;
+}
+
+/* 系统级全屏：右上角让给窗口按钮（最小化/最大化/关闭） */
+.headerInsetRight {
+  right: 152px;
+}
+
+.logo {
+  flex: 0 0 auto;
+  width: 23px;
+  height: 23px;
+  border-radius: 6px;
+}
+
+.roomMeta {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  flex-direction: column;
+  gap: 1px;
+  margin-left: 2px;
+}
+
+.nickname,
+.roomTitle,
+.roomNumber {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.nickname {
+  font-size: 11px;
+  font-weight: 650;
+}
+
+/* 房间标题（播放页顶栏）：单行省略，宽度由 .roomMeta 的 flex 收缩约束 */
+.roomTitle {
+  color: rgba(255, 255, 255, 0.92);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.roomNumber {
+  color: rgba(255, 255, 255, 0.66);
+  font-size: 9px;
+}
+
+.groupBadge {
+  display: inline-flex;
+  width: fit-content;
+  max-width: 100%;
+  overflow: hidden;
+  padding: 1px 5px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 999px;
+  color: rgba(255, 255, 255, 0.86);
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.iconButton {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  width: 27px;
+  height: 27px;
+  border-radius: 7px;
+  color: rgba(255, 255, 255, 0.82);
+}
+
+.iconButton:hover,
+.activeButton {
+  background: rgba(255, 255, 255, 0.14);
+  color: #fff;
+}
+
+.activeButton {
+  color: #a7f3d0;
+}
+
+.iconButton:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.playbackControls {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 12px;
+}
+
+.audioControl {
+  position: relative;
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+}
+
+.roomControls {
+  display: flex;
+  flex: 0 1 auto;
+  min-width: 0;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  row-gap: 2px;
+  margin-left: auto;
+}
+
+.refreshing svg {
+  animation: rotate 900ms linear infinite;
+}
+
+@keyframes rotate {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.footer {
+  inset: auto 0 0;
+  /* 空间不足时换行（底部锚定向上长高），按钮永不因卡片缩放被裁掉 */
+  flex-wrap: wrap;
+  row-gap: 2px;
+  min-height: 72px;
+  gap: 12px;
+  padding: 6px 14px 8px;
+  background: linear-gradient(0deg, rgba(0, 0, 0, 0.3), transparent);
+  /* 高于弹幕列表（z12 同层但 DOM 在后）：换行变高后按钮不被列表盖住 */
+  z-index: 12;
+}
+
+.footer .iconButton {
+  width: 30px;
+  height: 30px;
+  border: 0;
+  border-radius: 0;
+  background: none;
+  color: rgba(255, 255, 255, 0.88);
+  cursor: pointer;
+}
+
+.footer .iconButton:hover {
+  background: none;
+  color: #fff;
+}
+
+.footer .activeButton,
+.footer .activeButton:hover {
+  background: none;
+  color: var(--player-accent);
+}
+
+.volumeControl {
+  position: absolute;
+  z-index: 20;
+  bottom: calc(100% - 1px);
+  left: 50%;
+  display: flex;
+  flex-direction: column;
+  width: 42px;
+  min-width: 42px;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  padding: 6px 4px 5px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 8px;
+  background: rgba(10, 11, 13, 0.94);
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.38);
+  visibility: hidden;
+  opacity: 0;
+  color: rgba(255, 255, 255, 0.82);
+  transition:
+    opacity 120ms ease,
+    transform 120ms ease,
+    visibility 120ms ease;
+  transform: translate(-50%, 4px);
+}
+
+.audioControl:hover .volumeControl,
+.audioControl:focus-within .volumeControl {
+  visibility: visible;
+  opacity: 1;
+  pointer-events: auto;
+  transform: translate(-50%, 0);
+}
+
+.volumeSlider {
+  --volume-slider-width: 18px;
+  --volume-slider-height: 42px;
+}
+
+.volumeValue {
+  min-width: 0;
+  color: var(--player-accent);
+  font-size: 9px;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+  line-height: 1;
+}
+
+.boostWarning {
+  flex: 0 0 auto;
+  color: #fbbf24;
+  font-size: 9px;
+}
+
+/* ------------------------------------------- 空闲隐藏（宿主驱动）
+ * 鼠标静止 2s 后宿主加 .hidden；移动鼠标立即移除。
+ * 只用 opacity + pointer-events（不用 visibility:hidden），
+ * 唤回时命中测试与绘制同帧恢复，按钮立刻可点。
+ * 宿主同时递增 closeSignal 收掉悬停展开的下拉/面板，
+ * 点击打开的弹层则会让宿主暂停空闲隐藏。 */
+.hidden {
+  opacity: 0 !important;
+  pointer-events: none !important;
+}
+
+/* ------------------------------------------- 小尺寸卡片（容器查询）
+ * 宿主卡片 .tile 声明 container-type: inline-size。 */
+
+@container (max-width: 240px) {
+  .header {
+    gap: 3px;
+    padding: 4px;
+  }
+
+  .logo {
+    width: 20px;
+    height: 20px;
+  }
+
+  .roomMeta {
+    margin-left: 0;
+  }
+
+  .roomNumber {
+    display: none;
+  }
+
+  .iconButton {
+    width: 23px;
+  }
+
+  .playbackControls,
+  .roomControls {
+    gap: 2px;
+  }
+
+  .footer {
+    gap: 4px;
+    padding: 6px 5px 8px;
+  }
+
+  .footer .iconButton {
+    width: 24px;
+    height: 26px;
+  }
+
+  .footer .iconButton svg {
+    width: 16px;
+    height: 16px;
+  }
+
+  .volumeControl {
+    width: 38px;
+    min-width: 38px;
+    gap: 3px;
+    padding: 5px 3px 4px;
+  }
+
+  .volumeSlider {
+    --volume-slider-width: 18px;
+    --volume-slider-height: 38px;
+  }
+
+  .volumeValue {
+    font-size: 8px;
+  }
+}
+
+@container (max-width: 200px) {
+  .footer {
+    min-height: 108px;
+    flex-wrap: wrap;
+    gap: 2px;
+    padding: 3px 4px 5px;
+  }
+
+  .playbackControls {
+    gap: 0;
+  }
+
+  .volumeControl {
+    width: 36px;
+    min-width: 36px;
+  }
+
+  .volumeSlider {
+    --volume-slider-width: 16px;
+    --volume-slider-height: 36px;
+  }
+
+  .roomControls {
+    flex: 1 1 100%;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    gap: 2px 0;
+  }
+
+  .footer .iconButton {
+    width: 20px;
+    height: 22px;
+  }
+
+  .footer .iconButton svg {
+    width: 13px;
+    height: 13px;
+  }
+
+  .boostWarning {
+    display: none;
+  }
+}
+
+@container (max-width: 150px) {
+  .header {
+    min-height: 34px;
+    padding: 3px;
+  }
+
+  .logo {
+    width: 17px;
+    height: 17px;
+  }
+
+  .nickname {
+    font-size: 9px;
+  }
+
+  .header .iconButton {
+    width: 20px;
+    height: 20px;
+  }
+
+  .footer {
+    min-height: 128px;
+    padding: 2px;
+  }
+
+  .roomControls {
+    row-gap: 2px;
+  }
+
+  .footer .iconButton {
+    width: 18px;
+    height: 20px;
+  }
+
+  .footer .iconButton svg {
+    width: 11px;
+    height: 11px;
+  }
+
+  .volumeSlider {
+    --volume-slider-width: 15px;
+    --volume-slider-height: 32px;
+  }
+
+  .volumeControl {
+    width: 34px;
+    min-width: 34px;
+    padding: 4px 2px 3px;
+  }
+}

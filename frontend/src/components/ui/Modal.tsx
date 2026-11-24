@@ -2,6 +2,7 @@ import { X } from "lucide-react";
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { cn } from "@/lib/cn";
+import { usePortalHost } from "@/lib/portal";
 import styles from "./Modal.module.css";
 
 interface ModalProps {
@@ -39,6 +40,9 @@ export function Modal({
 }: ModalProps) {
   const panelRef = useRef<HTMLDivElement | null>(null);
   const restoreRef = useRef<HTMLElement | null>(null);
+  // todo05：DOM 全屏（监看单卡 / 播放器舞台）下 body 上的弹层不可见，
+  // 挂到全屏元素内部，退出全屏自动回到 body。
+  const portalHost = usePortalHost();
   // todo02：标题栏拖动弹窗（设置 / 存储设置等所有共用 Modal 的弹窗均生效）
   const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 });
   const [dragging, setDragging] = useState(false);
@@ -186,6 +190,6 @@ export function Modal({
         {footer && <footer className={styles.footer}>{footer}</footer>}
       </div>
     </div>,
-    document.body,
+    portalHost,
   );
 }

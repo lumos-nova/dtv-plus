@@ -88,6 +88,8 @@ interface FollowContextValue {
   removeFromFolder: (key: string, folderId: string) => void;
   /** 拖拽调整顶层关注顺序 */
   reorderTopLevel: (fromKey: string, toKey: string) => void;
+  /** 拖拽调整文件夹内部的成员顺序 */
+  reorderWithinFolder: (folderId: string, fromKey: string, toKey: string) => void;
   /** 拖拽调整文件夹顺序 */
   reorderFolders: (fromId: string, toId: string) => void;
   /** 从各平台刷新关注主播的直播状态 / 标题 / 头像 */
@@ -121,24 +123,6 @@ const FollowContext = createContext<FollowContextValue | null>(null);
 /** `platform:id` —— 关注项在整个应用里的唯一 key */
 export function followKey(platform: LivePlatform | string, id: string): string {
   return `${platform}:${id}`;
-}
-
-/**
- * 在播的排前面；数组是稳定排序，所以同状态内仍然保持传入的相对顺序。
- */
-export function sortLiveFirst(records: FollowRecord[]): FollowRecord[] {
-  // 已经有序时直接返回原数组，避免每次渲染都产生新引用
-  let sorted = true;
-  for (let i = 1; i < records.length; i += 1) {
-    const prev = records[i - 1];
-    const curr = records[i];
-    if (prev && curr && !prev.isLive && curr.isLive) {
-      sorted = false;
-      break;
-    }
-  }
-  if (sorted) return records;
-  return [...records].sort((a, b) => Number(b.isLive) - Number(a.isLive));
 }
 
 function newFolderId(): string {
@@ -516,10 +500,9 @@ export function FollowProvider({ children }: { children: ReactNode }) {
   }, [follows]);
 
   /**
-   * 直播中的排前面（同一状态内保持用户的手动顺序）。
-   *
-   * 只影响展示，不改动持久化的 order —— 用户拖拽出来的相对顺序仍然保留，
-   * 主播上下播时列表会自己归位。侧栏顶层列表和文件夹内部都用它。
+   * 完全按用户手动排序展示（todo05）：不再把直播中的自动排到前面，
+   * 未开播的主播也可以被拖到直播中的主播前面；上下播不会打乱顺序。
+   * 侧栏顶层列表和文件夹内部都遵循持久化的 order / keys。
    */
   const topLevel = useMemo(() => {
     const rows: FollowRecord[] = [];
@@ -527,18 +510,16 @@ export function FollowProvider({ children }: { children: ReactNode }) {
       const record = byKey.get(key);
       if (record) rows.push(record);
     }
-    return sortLiveFirst(rows);
+    return rows;
   }, [byKey, order]);
 
   const folderViews = useMemo<FollowFolderView[]>(
     () =>
       folders.map((folder) => ({
         ...folder,
-        records: sortLiveFirst(
-          folder.keys
-            .map((key) => byKey.get(key))
-            .filter((record): record is FollowRecord => Boolean(record)),
-        ),
+        records: folder.keys
+          .map((key) => byKey.get(key))
+          .filter((record): record is FollowRecord => Boolean(record)),
       })),
     [byKey, folders],
   );
@@ -721,6 +702,28 @@ export function FollowProvider({ children }: { children: ReactNode }) {
       return normalize({ ...prev, order });
     });
   }, []);
+
+  const reorderWithinFolder = useCallback(
+    (folderId: string, fromKey: string, toKey: string) => {
+      if (fromKey === toKey) return;
+      setState((prev) => {
+        const folder = prev.folders.find((f) => f.id === folderId);
+        if (!folder) return prev;
+        const from = folder.keys.indexOf(fromKey);
+        if (from < 0 || !folder.keys.includes(toKey)) return prev;
+        const keys = [...folder.keys];
+        const [moved] = keys.splice(from, 1);
+        const target = keys.indexOf(toKey);
+        if (target < 0) return prev;
+        keys.splice(target, 0, moved);
+        return normalize({
+          ...prev,
+          folders: prev.folders.map((f) => (f.id === folderId ? { ...f, keys } : f)),
+        });
+      });
+    },
+    [],
+  );
 
   const reorderFolders = useCallback((fromId: string, toId: string) => {
     if (fromId === toId) return;
@@ -1001,6 +1004,7 @@ export function FollowProvider({ children }: { children: ReactNode }) {
       moveToFolder,
       removeFromFolder,
       reorderTopLevel,
+      reorderWithinFolder,
       reorderFolders,
       refreshStatuses,
       refreshing,
@@ -1022,6 +1026,7 @@ export function FollowProvider({ children }: { children: ReactNode }) {
       removeFromFolder,
       reorderFolders,
       reorderTopLevel,
+      reorderWithinFolder,
       renameFolder,
       toggleFolder,
       toggleFollow,

@@ -5,7 +5,7 @@ import { api, PLATFORM_LABEL, PLATFORM_TAB_ORDER, type LivePlatform, type Search
 import { SmoothImage } from "@/components/common/SmoothImage";
 import { Spinner } from "@/components/ui/Spinner";
 import { cn } from "@/lib/cn";
-import { useOpenPlayer } from "@/lib/navigation";
+import { useOpenMonitorRoom } from "@/lib/navigation";
 import styles from "./SearchBox.module.css";
 
 type SearchResult = SearchHit & { platform: LivePlatform; key: string };
@@ -20,7 +20,7 @@ type SearchResult = SearchHit & { platform: LivePlatform; key: string };
  * U-04：↑/↓ 在结果间移动、Enter 打开当前项、Esc 关闭；Ctrl/Cmd+K 聚焦。
  */
 export function SearchBox() {
-  const openRoomNavigation = useOpenPlayer();
+  const openRoomNavigation = useOpenMonitorRoom();
   const [query, setQuery] = useState("");
   const [hits, setHits] = useState<SearchResult[]>([]);
   const [loading, setLoading] = useState(false);
@@ -146,9 +146,10 @@ export function SearchBox() {
       setFocused(false);
       setQuery("");
       // 进入直播间后把焦点还给页面：否则焦点留在搜索框里，
-      // 播放页的空格 / Esc / F 等快捷键会因为“正在输入”而被忽略。
+      // 监看页的空格 / Esc / F 等快捷键会因为“正在输入”而被忽略。
       inputRef.current?.blur();
-      // 从播放页搜索另一个房间时同样 replace：不把旧直播间留在历史栈里。
+      // todo05：搜索结果直接在多平台监看页打开；已在 /monitor 时 replace，
+      // 不把旧状态留在历史栈里。
       openRoomNavigation(result.platform, result.id);
     },
     [openRoomNavigation],

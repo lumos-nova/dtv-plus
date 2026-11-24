@@ -30,6 +30,11 @@
   outline-offset: -3px;
 }
 
+/* 空闲隐藏时把鼠标也藏起来（桌面播放器的标准细节） */
+.tileIdle {
+  cursor: none;
+}
+
 /* todo02：Ctrl 多选中的直播间卡片 */
 .tileSelected {
   outline: 2px solid var(--accent);
@@ -37,6 +42,17 @@
   box-shadow:
     0 0 0 3px color-mix(in srgb, var(--accent) 30%, transparent),
     0 5px 18px rgba(0, 0, 0, 0.2);
+}
+
+/* 全屏（工作台内全屏 / 单卡 DOM 全屏）：画面铺满整块区域，
+ * 不再显示音频焦点 / 多选 / 拖拽等边缘高亮，避免画面四周圈着一道亮边；
+ * 圆角也一并去掉，让画面严丝合缝铺满四角。
+ * 双类选择器（0,2,0）稳定压过上面所有单类高亮规则。 */
+.tile.tileFull {
+  border-color: transparent;
+  border-radius: 0;
+  box-shadow: none;
+  outline: none;
 }
 
 .media {
@@ -58,6 +74,23 @@
   background: #08090b;
 }
 
+/* 合成哨兵：卡片头/脚控制条靠 :hover 淡入淡出，
+ * 且没有 backdrop-filter；鼠标静止控制条隐藏后，WebView2 可能把 <video>
+ * 提升成 DirectComposition 硬件叠加平面，盖住之后唤回的 header/footer
+ *（直播间全屏后看不到任何功能按键）。常驻 1px backdrop-filter 哨兵
+ *（blur(0) 视觉零开销）强制视频走正常合成，控制条永远画在视频之上。 */
+.compositeGuard {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 1px;
+  height: 1px;
+  z-index: 4;
+  pointer-events: none;
+  backdrop-filter: blur(0px);
+  -webkit-backdrop-filter: blur(0px);
+}
+
 .danmakuPanel {
   position: absolute;
   z-index: 12;
@@ -74,53 +107,46 @@
   height: 100%;
 }
 
-.header,
-.footer {
-  position: absolute;
-  z-index: 10;
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  color: #fff;
-  background: linear-gradient(180deg, rgba(0, 0, 0, 0.78), rgba(0, 0, 0, 0.36));
-  opacity: 0.8;
-  transition: opacity 140ms ease;
-}
-
-.media:hover .header,
-.media:hover .footer,
-.header:focus-within,
-.footer:focus-within {
+/* 播放器 chrome（header/footer）的布局与外观在 PlayerChrome.module.css，
+ * 与播放页共用；这里只保留卡片自己的显隐机制（CSS :hover/:focus-within）。
+ * 鼠标悬停但静止 2s 的空闲隐藏由 RoomTile 传 hidden（共享模块的 .hidden，
+ * 0,1,0 + !important，能压过下面的 :hover 常显规则）。
+ * 选择器用 .media header/footer 元素选择器（0,1,1），低于 .hidden 与
+ * .headerInsetRight 等类规则，互不冲突。 */
+.media:hover header,
+.media:hover footer,
+.media header:focus-within,
+.media footer:focus-within {
   opacity: 1;
 }
 
-.tile.playing:not(:hover):not(:focus-within) .header,
-.tile.playing:not(:hover):not(:focus-within) .footer,
+.tile.playing:not(:hover):not(:focus-within) .media header,
+.tile.playing:not(:hover):not(:focus-within) .media footer,
 .tile.playing:not(:hover):not(:focus-within) .resizeHandle {
   opacity: 0;
   pointer-events: none;
 }
 
-.tile.playing:hover .header,
-.tile.playing:hover .footer,
-.tile.playing:focus-within .header,
-.tile.playing:focus-within .footer {
+.tile.playing:hover .media header,
+.tile.playing:hover .media footer,
+.tile.playing:focus-within .media header,
+.tile.playing:focus-within .media footer {
   opacity: 1;
   pointer-events: auto;
 }
 
 /* 未开播的卡片：功能组件默认隐藏，鼠标悬停 / 键盘聚焦时才显示 */
-.tile.offline:not(:hover):not(:focus-within) .header,
-.tile.offline:not(:hover):not(:focus-within) .footer,
+.tile.offline:not(:hover):not(:focus-within) .media header,
+.tile.offline:not(:hover):not(:focus-within) .media footer,
 .tile.offline:not(:hover):not(:focus-within) .resizeHandle {
   opacity: 0;
   pointer-events: none;
 }
 
-.tile.offline:hover .header,
-.tile.offline:hover .footer,
-.tile.offline:focus-within .header,
-.tile.offline:focus-within .footer {
+.tile.offline:hover .media header,
+.tile.offline:hover .media footer,
+.tile.offline:focus-within .media header,
+.tile.offline:focus-within .media footer {
   opacity: 1;
   pointer-events: auto;
 }
@@ -132,196 +158,6 @@
 .tile.offline:not(:hover):not(:focus-within).resizing .resizeHandle {
   opacity: 0;
   pointer-events: auto;
-}
-
-.header {
-  inset: 0 0 auto;
-  min-height: 42px;
-  padding: 5px 7px;
-}
-
-.logo {
-  flex: 0 0 auto;
-  width: 23px;
-  height: 23px;
-  border-radius: 6px;
-}
-
-.roomMeta {
-  display: flex;
-  flex: 1;
-  min-width: 0;
-  flex-direction: column;
-  gap: 1px;
-  margin-left: 2px;
-}
-
-.nickname,
-.roomNumber {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.nickname {
-  font-size: 11px;
-  font-weight: 650;
-}
-
-.roomNumber {
-  color: rgba(255, 255, 255, 0.66);
-  font-size: 9px;
-}
-
-.iconButton {
-  display: inline-flex;
-  flex: 0 0 auto;
-  align-items: center;
-  justify-content: center;
-  width: 27px;
-  height: 27px;
-  border-radius: 7px;
-  color: rgba(255, 255, 255, 0.82);
-}
-
-.playbackControls {
-  display: flex;
-  flex: 0 0 auto;
-  align-items: center;
-  gap: 12px;
-}
-
-.audioControl {
-  position: relative;
-  display: flex;
-  flex: 0 0 auto;
-  align-items: center;
-}
-
-.roomControls {
-  display: flex;
-  flex: 0 1 auto;
-  min-width: 0;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 10px;
-  row-gap: 2px;
-  margin-left: auto;
-}
-
-.iconButton:hover,
-.activeButton {
-  background: rgba(255, 255, 255, 0.14);
-  color: #fff;
-}
-
-.iconButton:disabled {
-  opacity: 0.4;
-  cursor: not-allowed;
-}
-
-.activeButton {
-  color: #a7f3d0;
-}
-
-.refreshing svg {
-  animation: rotate 900ms linear infinite;
-}
-
-@keyframes rotate {
-  to {
-    transform: rotate(360deg);
-  }
-}
-
-.footer {
-  inset: auto 0 0;
-  /* 空间不足时换行（底部锚定向上长高），按钮永不因卡片缩放被裁掉 */
-  flex-wrap: wrap;
-  row-gap: 2px;
-  min-height: 72px;
-  gap: 12px;
-  padding: 6px 14px 8px;
-  background: linear-gradient(0deg, rgba(0, 0, 0, 0.3), transparent);
-  /* 高于弹幕列表（z12 同层但 DOM 在后）：换行变高后按钮不被列表盖住 */
-  z-index: 12;
-}
-
-.footer .iconButton {
-  width: 30px;
-  height: 30px;
-  border: 0;
-  border-radius: 0;
-  background: none;
-  color: rgba(255, 255, 255, 0.88);
-  cursor: pointer;
-}
-
-.footer .iconButton:hover {
-  background: none;
-  color: #fff;
-}
-
-.footer .activeButton,
-.footer .activeButton:hover {
-  background: none;
-  color: var(--player-accent);
-}
-
-.volumeControl {
-  position: absolute;
-  z-index: 20;
-  bottom: calc(100% - 1px);
-  left: 50%;
-  display: flex;
-  flex-direction: column;
-  width: 42px;
-  min-width: 42px;
-  align-items: center;
-  justify-content: center;
-  gap: 2px;
-  padding: 6px 4px 5px;
-  border: 1px solid rgba(255, 255, 255, 0.14);
-  border-radius: 8px;
-  background: rgba(10, 11, 13, 0.94);
-  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.38);
-  visibility: hidden;
-  opacity: 0;
-  color: rgba(255, 255, 255, 0.82);
-  transition:
-    opacity 120ms ease,
-    transform 120ms ease,
-    visibility 120ms ease;
-  transform: translate(-50%, 4px);
-}
-
-.audioControl:hover .volumeControl,
-.audioControl:focus-within .volumeControl {
-  visibility: visible;
-  opacity: 1;
-  pointer-events: auto;
-  transform: translate(-50%, 0);
-}
-
-.volumeSlider {
-  --volume-slider-width: 18px;
-  --volume-slider-height: 42px;
-}
-
-.volumeValue {
-  min-width: 0;
-  color: var(--player-accent);
-  font-size: 9px;
-  font-variant-numeric: tabular-nums;
-  text-align: center;
-  line-height: 1;
-}
-
-.boostWarning {
-  flex: 0 0 auto;
-  color: #fbbf24;
-  font-size: 9px;
 }
 
 .status,
@@ -504,20 +340,6 @@
   border-left: 2px solid rgba(255, 255, 255, 0.8);
 }
 
-.groupBadge {
-  display: inline-flex;
-  width: fit-content;
-  max-width: 100%;
-  overflow: hidden;
-  padding: 1px 5px;
-  border: 1px solid rgba(255, 255, 255, 0.18);
-  border-radius: 999px;
-  color: rgba(255, 255, 255, 0.86);
-  font-size: 10px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 /* 右键菜单 portal 到 body：必须是顶层规则。
    放进 @container 时 portal 外没有 tile 容器，查询永不匹配，
    菜单会失去 position:fixed 等全部样式而“看不见”。 */
@@ -578,157 +400,5 @@
   background: var(--border);
 }
 
-@container (max-width: 240px) {
-  .header {
-    gap: 3px;
-    padding: 4px;
-  }
-
-  .logo {
-    width: 20px;
-    height: 20px;
-  }
-
-  .roomMeta {
-    margin-left: 0;
-  }
-
-  .roomNumber {
-    display: none;
-  }
-
-  .iconButton {
-    width: 23px;
-  }
-
-  .playbackControls,
-  .roomControls {
-    gap: 2px;
-  }
-
-  .footer {
-    gap: 4px;
-    padding: 6px 5px 8px;
-  }
-
-  .footer .iconButton {
-    width: 24px;
-    height: 26px;
-  }
-
-  .footer .iconButton svg {
-    width: 16px;
-    height: 16px;
-  }
-
-  .volumeControl {
-    width: 38px;
-    min-width: 38px;
-    gap: 3px;
-    padding: 5px 3px 4px;
-  }
-
-  .volumeSlider {
-    --volume-slider-width: 18px;
-    --volume-slider-height: 38px;
-  }
-
-  .volumeValue {
-    font-size: 8px;
-  }
-}
-
-@container (max-width: 200px) {
-  .footer {
-    min-height: 108px;
-    flex-wrap: wrap;
-    gap: 2px;
-    padding: 3px 4px 5px;
-  }
-
-  .playbackControls {
-    gap: 0;
-  }
-
-  .volumeControl {
-    width: 36px;
-    min-width: 36px;
-  }
-
-  .volumeSlider {
-    --volume-slider-width: 16px;
-    --volume-slider-height: 36px;
-  }
-
-  .roomControls {
-    flex: 1 1 100%;
-    flex-wrap: wrap;
-    justify-content: flex-end;
-    gap: 2px 0;
-  }
-
-  .footer .iconButton {
-    width: 20px;
-    height: 22px;
-  }
-
-  .footer .iconButton svg {
-    width: 13px;
-    height: 13px;
-  }
-
-  .boostWarning {
-    display: none;
-  }
-}
-
-@container (max-width: 150px) {
-  .header {
-    min-height: 34px;
-    padding: 3px;
-  }
-
-  .logo {
-    width: 17px;
-    height: 17px;
-  }
-
-  .nickname {
-    font-size: 9px;
-  }
-
-  .header .iconButton {
-    width: 20px;
-    height: 20px;
-  }
-
-  .footer {
-    min-height: 128px;
-    padding: 2px;
-  }
-
-  .roomControls {
-    row-gap: 2px;
-  }
-
-  .footer .iconButton {
-    width: 18px;
-    height: 20px;
-  }
-
-  .footer .iconButton svg {
-    width: 11px;
-    height: 11px;
-  }
-
-  .volumeSlider {
-    --volume-slider-width: 15px;
-    --volume-slider-height: 32px;
-  }
-
-  .volumeControl {
-    width: 34px;
-    min-width: 34px;
-    padding: 4px 2px 3px;
-  }
-}
+/* 小尺寸卡片的 chrome 缩放（@container 查询）在 PlayerChrome.module.css，
+ * 容器由上面的 .tile { container-type: inline-size } 提供。 */

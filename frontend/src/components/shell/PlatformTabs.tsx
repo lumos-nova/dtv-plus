@@ -18,17 +18,9 @@ const TAB_PATH: Record<TabId, string> = {
   bilibili: "/bilibili",
 };
 
-function activeTabFromPath(pathname: string, search: string): TabId {
+function activeTabFromPath(pathname: string): TabId {
   if (pathname.startsWith("/monitor")) return "monitor";
   if (pathname.startsWith("/add-room")) return "douyu";
-  // 播放页本身不属于任何平台：按 URL 里的 room 平台高亮对应的 tab
-  if (pathname.startsWith("/player")) {
-    const platform = new URLSearchParams(search).get("platform");
-    if (platform && (PLATFORM_TAB_ORDER as readonly string[]).includes(platform)) {
-      return platform as TabId;
-    }
-    return "douyu";
-  }
   if (pathname.startsWith("/huya")) return "huya";
   if (pathname.startsWith("/douyin")) return "douyin";
   if (pathname.startsWith("/bilibili")) return "bilibili";
@@ -43,9 +35,9 @@ function activeTabFromPath(pathname: string, search: string): TabId {
  */
 export function PlatformTabs() {
   const navigate = useNavigate();
-  const { pathname, search } = useLocation();
+  const { pathname } = useLocation();
 
-  const active = activeTabFromPath(pathname, search);
+  const active = activeTabFromPath(pathname);
 
   const go = (next: TabId) => {
     if (!(next in TAB_PATH)) return;
