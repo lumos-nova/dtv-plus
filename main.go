@@ -117,6 +117,11 @@ func main() {
 			AdditionalBrowserArgs: []string{
 				"--js-flags=--max-old-space-size=256",
 				"--disk-cache-size=104857600",
+				// 桌面直播应用：放开自动播放策略。WebView2 默认要求"用户激活"
+				// 才允许带声音起播，而开房方式未必带激活（如拖拽入工作台），
+				// 会导致 play() 被拒、画面停在加载圈；播放中解除静音也会被
+				// 再次拦截而卡住。本应用由用户主动开房，允许自动播放是合理的。
+				"--autoplay-policy=no-user-gesture-required",
 			},
 		},
 		// U-10：第二次启动只聚焦已有窗口，不再开第二份应用。

@@ -90,7 +90,7 @@ export function mapVariant(raw: Models.StreamVariant): StreamVariant {
     url: raw.url,
     // 后端只会给 flv/hls/mp4 之一，这里收敛成联合类型
     format: raw.format === "hls" ? "hls" : raw.format === "mp4" ? "mp4" : "flv",
-    // 斗鱼同一实际档位可能有多个 CDN 地址；旧后端没有 urls 时退回单地址。
+    // 斗鱼备用地址列表（现通常只含首条成功线路）；后端没有 urls 时退回单地址。
     urls: raw.urls && raw.urls.length > 0 ? raw.urls : [raw.url],
     appliedRate: raw.appliedRate ?? null,
     unconfirmed: raw.unconfirmed ?? false,

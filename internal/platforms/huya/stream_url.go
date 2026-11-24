@@ -592,12 +592,19 @@ func selectCandidate(candidates []streamCandidateJSON, line string) streamCandid
 	return candidates[0]
 }
 
-// buildStreamURL 拼出最终播放地址（含 anti-code 与 codec 参数）。
+// buildStreamURL 取一次播放鉴权 token 再拼地址（单条取流路径用）。
 func (c *Client) buildStreamURL(candidate streamCandidateJSON, ratio *int32) (string, error) {
 	token, err := c.getCdnToken(candidate.FlvURL, candidate.StreamName)
 	if err != nil {
 		return "", err
 	}
+	return buildStreamURLWithToken(candidate, ratio, token)
+}
+
+// buildStreamURLWithToken 用已取好的 token 拼播放地址（含 anti-code 与 codec 参数）。
+// token 与清晰度无关：StreamInfo 取一次就复用给所有档位，
+// 避免每个档位都各自跑一次 WUP 往返。
+func buildStreamURLWithToken(candidate streamCandidateJSON, ratio *int32, token string) (string, error) {
 	anti, err := buildAntiCode(candidate.StreamName, int64(candidate.ChannelID), token)
 	if err != nil {
 		return "", err
@@ -685,16 +692,21 @@ func (c *Client) StreamInfo(roomID, line string) (*common.StreamInfo, error) {
 	bitrates := availableBitrates(data)
 	variants := buildVariants(bitrates)
 
-	// token 与清晰度无关：取一次，再给每个档位拼不同 ratio
+	// token 与清晰度无关：只取一次，复用给所有档位拼不同 ratio。
+	// 之前每个档位各取一次 token，白白多跑两次 WUP 往返，拖慢起播。
+	token, err := c.getCdnToken(selected.FlvURL, selected.StreamName)
+	if err != nil {
+		return nil, err
+	}
 	for _, variant := range variants {
 		var ratio *int32
 		if variant.id != "source" {
 			rate := variant.bitRate
 			ratio = &rate
 		}
-		streamURL, err := c.buildStreamURL(selected, ratio)
+		streamURL, err := buildStreamURLWithToken(selected, ratio, token)
 		if err != nil {
-			// 单个档位失败不影响其它档位（例如上游偶发 token 失败）
+			// 单个档位失败不影响其它档位（例如 anti-code 计算异常）
 			continue
 		}
 		info.Variants = append(info.Variants, common.StreamVariant{

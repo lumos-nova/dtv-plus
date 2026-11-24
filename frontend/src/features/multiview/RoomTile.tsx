@@ -511,6 +511,26 @@ export function RoomTile({
     onQualityChange,
   };
 
+  /* 线路自愈用的状态：已试过的坏线路集合 + 卡住看门狗定时器 + 换线函数。
+   * 换线函数读最新的 info/room（用 ref 承载，避免 effect 闭包过期）。 */
+  const stallTriedRef = useRef<Set<string>>(new Set());
+  const stallWatchdogRef = useRef<number | null>(null);
+  const switchToNextLineRef = useRef<() => boolean>(() => false);
+  switchToNextLineRef.current = () => {
+    const lines = info?.lines ?? [];
+    if (!info || lines.length <= 1) return false;
+    const currentId = (lines.find((l) => l.id === room.lineId) ?? lines[0]).id;
+    stallTriedRef.current.add(currentId);
+    const next = lines.find((l) => !stallTriedRef.current.has(l.id));
+    if (!next) return false;
+    toast(
+      `${info.nickname || `房间 ${room.roomId}`}：当前线路卡顿，已切换到「${next.label}」`,
+      "info",
+    );
+    onLineChange(room.key, next.id);
+    return true;
+  };
+
   useEffect(() => {
     if (player.state === "playing") {
       reconnectAttemptRef.current = 0;
@@ -518,6 +538,12 @@ export function RoomTile({
     }
     if (player.state !== "error") return;
     reconnectAttemptRef.current += 1;
+    // 同一条线路一出错就先尝试换线。坏线路（如某 CDN 给特定房间返回损坏的
+    // FLV 流）对着同一地址重试毫无意义，换一条线路往往立刻恢复。
+    if (reconnectAttemptRef.current >= 1 && switchToNextLineRef.current()) {
+      reconnectAttemptRef.current = 0;
+      return;
+    }
     // 手动选的清晰度连续失败 3 次：多半是该档位本身不可用（需要登录、
     // 匿名被降级、地址失效等），继续对着同一个地址退避重试只会无限重连。
     // 切回自动选档（pickTileVariant 会挑最省资源且通常可播的档位）。
@@ -535,6 +561,47 @@ export function RoomTile({
     const timer = window.setTimeout(() => setRetryKey((key) => key + 1), delay);
     return () => window.clearTimeout(timer);
   }, [player.errorNonce, player.state, room.key, room.roomId, toast]);
+
+  /* ---------------------------------------------------- 线路自愈（卡住换线）
+   * 实测：虎牙 TX CDN 会给特定房间返回损坏的 FLV（头声明纯视频却混着音频
+   * tag，且立刻断连），xgplayer 按头建纯视频缓冲，播几秒就卡死且不再恢复；
+   * 同房间切到 AL 线路即正常。这类坏线路不会必然报 error，可能一直停在
+   * buffering/loading，所以需要一个看门狗：持续缓冲/加载超时就换下一条线路。
+   * 已试遍所有线路则重置后重新取流（等网络/上游恢复），避免无限换线循环。 */
+  useEffect(() => {
+    const clear = () => {
+      if (stallWatchdogRef.current != null) {
+        window.clearTimeout(stallWatchdogRef.current);
+        stallWatchdogRef.current = null;
+      }
+    };
+    if (player.state === "playing") {
+      stallTriedRef.current = new Set();
+      clear();
+      return;
+    }
+    // 只对直播生效；轮播/未开播的加载不触发换线。
+    if (!info?.isLive || info.isLoop) {
+      clear();
+      return;
+    }
+    if (player.state !== "buffering" && player.state !== "loading") {
+      clear();
+      return;
+    }
+    // 播过再卡（buffering）8s 即判卡；首次加载（loading）放宽到 15s，
+    // 避免慢网正常起播被误判换线。
+    const delay = player.state === "buffering" ? 8_000 : 15_000;
+    clear();
+    stallWatchdogRef.current = window.setTimeout(() => {
+      stallWatchdogRef.current = null;
+      if (!switchToNextLineRef.current()) {
+        stallTriedRef.current = new Set();
+        setRetryKey((key) => key + 1);
+      }
+    }, delay);
+    return clear;
+  }, [player.state, info?.isLive, info?.isLoop]);
 
   /* 轮播稿件自然播完：重新取流拿下一条。 */
   useEffect(() => {

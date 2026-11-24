@@ -102,7 +102,7 @@ export interface StreamVariant {
   url: string;
   /** mp4 = B 站轮播房的点播整段视频（原生 <video> 播放，支持 seek） */
   format: "flv" | "hls" | "mp4";
-  /** 同一实际档位在多个 CDN 上的地址（斗鱼），第一个与 url 相同 */
+  /** 备用地址列表（斗鱼，现通常只含首条成功线路），第一个与 url 相同 */
   urls?: string[];
   /** 服务端确认的实际档位；null/undefined 表示未确认 */
   appliedRate?: number | null;

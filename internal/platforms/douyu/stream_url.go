@@ -22,8 +22,8 @@ import (
 //   - MD5 链算 auth，POST getH5PlayV1，参数含 iar=0 / ver=Douyu_new；
 //   - 每个进程随机 did，并在 Cookie 里同时发送 dy_did / acf_did；
 //   - 解析 multirates 时保持平台顺序，rate 作为稳定 id，不做数值大小排序；
-//   - 每个清晰度按 CDN 逐个解析，按服务端确认的实际 rate 分组，优先请求档位；
-//   - 同组 URL 全部保留（多 CDN 失败切换），并把 expire=300&fcdn=ws 补成 expire=0。
+//   - 每个清晰度按线路顺序解析，首条成功即返回（失败才换线，减少取流延迟）；
+//   - 把 expire=300&fcdn=ws 补成 expire=0。
 
 // ---------------------------------------------------------------- 接口响应模型
 
@@ -513,87 +513,40 @@ func (c *Client) resolvePlayURL(roomID string, rate int, cdn string) (playURLRes
 	return res, nil
 }
 
-// resolveQualityURLs 按 pure_live 的规则解析一个清晰度：
-// 逐个 CDN 请求，按“服务端确认的实际 rate”分组；优先请求档位，
-// 否则选第一个有确认的档位组；全部未确认时用未知组并标记 unconfirmed。
+// resolveQualityURLs 解析一个清晰度：按线路顺序请求 CDN，
+// 第一条成功即返回；失败才换下一条（故障切换语义保留）。
+//
+// 旧实现会把所有 CDN 都请求一遍，按“服务端确认的实际 rate”分组拼出
+// 多 CDN 备用 URL 列表。但前端 / 中继 / 录制实际只消费第一条地址，
+// 其余请求纯粹增加取流延迟（每条 CDN 都是一次 getH5PlayV1 往返，
+// 且在同一档位内是串行的）。现在首条可用线路即播放地址，
+// appliedRate / unconfirmed 直接取该线路的服务端确认结果。
 func (c *Client) resolveQualityURLs(roomID string, requested rateVariant, cdns []common.LineOption) ([]string, *int, bool, error) {
-	type group struct {
-		rate  int
-		known bool
-		urls  []string
-	}
-	groups := make([]group, 0, len(cdns))
-	index := make(map[int]int, len(cdns))
 	var lastErr error
-
 	for _, cdn := range cdns {
 		resolution, err := c.resolvePlayURL(roomID, requested.Rate, cdn.ID)
 		if err != nil {
 			lastErr = err
 			continue
 		}
-
-		key := -1
-		known := false
-		if resolution.AppliedRate != nil && *resolution.AppliedRate >= 0 {
-			key = *resolution.AppliedRate
-			known = true
+		if len(resolution.URLs) == 0 {
+			continue
 		}
-		idx, ok := index[key]
-		if !ok {
-			idx = len(groups)
-			index[key] = idx
-			groups = append(groups, group{rate: key})
-		}
-		if known {
-			groups[idx].known = true
-			groups[idx].rate = key
-		}
-		for _, item := range resolution.URLs {
-			if !containsString(groups[idx].urls, item) {
-				groups[idx].urls = append(groups[idx].urls, item)
-			}
-		}
+		return resolution.URLs, resolution.AppliedRate, resolution.Unconfirmed, nil
 	}
-
-	if len(groups) == 0 {
-		if lastErr != nil {
-			return nil, nil, true, lastErr
-		}
-		return nil, nil, true, fmt.Errorf("斗鱼没有返回可用的直播流")
+	if lastErr != nil {
+		return nil, nil, true, lastErr
 	}
-
-	if requested.Rate >= 0 {
-		if idx, ok := index[requested.Rate]; ok {
-			rate := groups[idx].rate
-			return groups[idx].urls, &rate, false, nil
-		}
-	}
-	for _, item := range groups {
-		if item.known {
-			rate := item.rate
-			return item.urls, &rate, false, nil
-		}
-	}
-	return groups[0].urls, nil, true, nil
-}
-
-func containsString(list []string, value string) bool {
-	for _, item := range list {
-		if item == value {
-			return true
-		}
-	}
-	return false
+	return nil, nil, true, fmt.Errorf("斗鱼没有返回可用的直播流")
 }
 
 // ---------------------------------------------------------------- 对外接口
 
 // StreamInfo 是播放页的主入口：一次拿到房间信息 + 所有清晰度 + 所有线路。
 //
-// 清晰度保持斗鱼 multirates 顺序；每个清晰度会把所有 CDN 都解析一遍，
-// 返回同一“确认档位”的多个 URL（URLs），URL 取其中第一条。
-// 这样既保留平台原始档位名，也避免把不同实际档位的 URL 混在一个选项里。
+// 清晰度保持斗鱼 multirates 顺序，各档位并行解析；每个档位按线路顺序
+// 请求，首条成功即返回（URLs 只含该条地址）。这样既保留平台原始档位名，
+// 也把取流请求数从 档位数×线路数 降到约 档位数，明显加快起播。
 func (c *Client) StreamInfo(roomID, line string) (*common.StreamInfo, error) {
 	detail, err := c.FetchRoomDetail(roomID)
 	if err != nil {

@@ -252,9 +252,20 @@ export function MonitorPage() {
       return;
     }
 
+    // 打开新直播时若已有卡片处于工作台内全屏：把该卡片缩到最小（1×1）
+    // 再添加新房间 —— 新直播不会被藏在全屏画面后面，原全屏卡片也不再
+    // 占着大格子。缩小必须并入下面的 nextRooms 计算：单独 setWorkspace
+    // 会被最终的 rooms 写入覆盖。
+    const fullscreenKey = windowFullscreenRoomKey;
+    const baseRooms: MonitorRoom[] = fullscreenKey
+      ? rooms.map((room): MonitorRoom =>
+          room.key === fullscreenKey ? { ...room, size: { columns: 1, rows: 1 } } : room,
+        )
+      : rooms;
+
     const danmakuPreferences = loadDanmuPreferences();
     const nextRooms: MonitorRoom[] = [
-      ...rooms,
+      ...baseRooms,
       {
         key,
         platform,
@@ -283,10 +294,9 @@ export function MonitorPage() {
             : room;
         })
       : nextRooms;
-    // todo05：已有房间处于全屏时，先退出全屏再加新房间，否则新房间
-    // 会被藏在全屏画面后面。工作台内全屏直接恢复音频焦点；DOM 单卡全屏
-    // 直接退出即可。
-    if (windowFullscreenRoomKey) exitWindowFullscreenForRoom();
+    // 退出工作台内全屏并恢复进入前的音频焦点（该卡片已在上面缩到 1×1）；
+    // DOM 单卡全屏直接退出即可。
+    if (fullscreenKey) exitWindowFullscreenForRoom();
     if (document.fullscreenElement) void document.exitFullscreen().catch(() => undefined);
     setWorkspace((previous) => ({
       ...previous,

@@ -269,6 +269,15 @@ export function useXgPlayer(
       player.on("playing", () => {
         setState("playing");
         setError(null);
+        // 自动播放被拦截时曾退化为静音起播；真正播起来后恢复用户期望的静音
+        // 状态。但仅在"存在用户激活"时才解除静音：无激活的会话（如拖拽开房）
+        // 若把播放中的媒体解除静音，WebView2 会按"带声音自动播放"再次拦截并
+        // 暂停，表现为"播几秒就卡住"。此时保持静音，由用户点音量按钮（手势）恢复。
+        const intended = audioRef.current;
+        const media = player.media as HTMLVideoElement | null;
+        if (!intended || !media) return;
+        const activated = navigator.userActivation?.hasBeenActive ?? true;
+        if (activated) media.muted = intended.muted;
       });
       player.on("canplay", () => {
         setState((prev) => (prev === "loading" || prev === "buffering" ? "playing" : prev));
@@ -281,6 +290,20 @@ export function useXgPlayer(
         setError("直播流连接中断，正在尝试自动重连。");
         setState("error");
         setErrorNonce((n) => n + 1);
+      });
+      // WebView2 的自动播放策略可能拦截"带声音起播"：音频焦点房间 muted=false，
+      // 而打开方式未必带用户激活（如从关注列表拖拽入工作台）。xgplayer 被拦截后
+      // 会 pause 并发 autoplay_was_prevented，不处理就永远停在"▶ + 加载圈"。
+      // 标准做法：退化为静音起播（静音自动播放总是被允许），播起来后由上面的
+      // playing 回调恢复声音。
+      player.on("autoplay_was_prevented", () => {
+        if (disposed) return;
+        const media = player.media as HTMLVideoElement | null;
+        if (!media) return;
+        media.muted = true;
+        void media.play().catch(() => {
+          /* 仍失败时保留播放按钮，用户可手动点击起播 */
+        });
       });
 
       const media = player.media as HTMLVideoElement | null;
