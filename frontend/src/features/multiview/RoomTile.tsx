@@ -43,6 +43,7 @@ import { clearRoomMeta, setRoomMeta } from "./roomDirectory";
 import { GroupAssignDialog } from "./GroupAssignDialog";
 import { ReplayHighlightModal } from "./ReplayHighlightModal";
 import { useRoomRecording } from "./useRoomRecording";
+import { pickTileVariant } from "./tileQuality";
 import styles from "./RoomTile.module.css";
 
 const MAX_MESSAGES = 120;
@@ -349,10 +350,8 @@ export function RoomTile({
     };
   }, [retryKey, room.lineId, room.platform, room.roomId]);
 
-  const variant =
-    info?.variants.find((item) => item.id === room.qualityId) ??
-    info?.variants.find((item) => item.label.includes("原画")) ??
-    info?.variants[0];
+  // 小窗默认中低档省内存/带宽；用户手动选过的清晰度优先（见 tileQuality）
+  const variant = pickTileVariant(info?.variants ?? [], room.qualityId);
   const source =
     info?.isLive && variant ? { url: variant.url, format: variant.format, nonce: retryKey } : null;
   const player = useXgPlayer(playerHostRef, source, true, {

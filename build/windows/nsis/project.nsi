@@ -105,9 +105,12 @@ SectionEnd
 Section "uninstall" 
     !insertmacro wails.setShellContext
 
-    RMDir /r "$AppData\${PRODUCT_EXECUTABLE}" # Remove the WebView2 DataPath
+    RMDir /r "$AppData\${PRODUCT_EXECUTABLE}" # Remove the legacy WebView2 DataPath
 
-    RMDir /r $INSTDIR
+    # 只删除安装器装进来的文件，保留 $INSTDIR\data（配置/登录态/录像等用户数据）。
+    # 目录非空时 RMDir 会静默失败，data 得以保留；用户想彻底清理时手动删目录即可。
+    Delete "$INSTDIR\${PRODUCT_EXECUTABLE}"
+    RMDir $INSTDIR
 
     Delete "$SMPROGRAMS\${INFO_PRODUCTNAME}.lnk"
     Delete "$DESKTOP\${INFO_PRODUCTNAME}.lnk"

@@ -153,6 +153,20 @@ tasks:
       # 需要装到 Program Files 时传 INSTALL_SCOPE=machine。
       INSTALL_SCOPE: '{{.INSTALL_SCOPE | default "user"}}'
 
+  package:portable:
+    summary: 打 Windows 便携版 zip（解压即用，无需安装）
+    desc: |
+      构建并签名 dtv.exe 后打成 zip（exe + README.txt）。
+      数据全部写在 exe 同级的 data\ 目录（见 internal/appdirs/portable.go）。
+        wails3 task windows:package:portable
+      输出 bin/DTV-<version>-win-x64-portable.zip。
+    deps:
+      - task: '{{if eq .SIGN_ENABLED "false"}}build{{else}}sign{{end}}'
+    cmds:
+      - powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "build/windows/package-portable.ps1" -ExePath "{{.BIN_DIR}}/{{.APP_NAME}}.exe" -OutDir "{{.BIN_DIR}}" -Arch "{{.ARCH}}"
+    vars:
+      ARCH: '{{.ARCH | default ARCH}}'
+
   generate:syso:
     summary: Generates Windows `.syso` file
     dir: build

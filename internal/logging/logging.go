@@ -129,6 +129,16 @@ func (w *rotatingWriter) Write(p []byte) (int, error) {
 	return n, err
 }
 
+// bestEffortWriter 包装可能失效的输出（如 windowsgui 进程无控制台时的
+// os.Stderr）：写入失败直接吞掉，避免 io.MultiWriter 因首个 writer 报错
+// 而中断，导致后面的日志文件永远写不进去。
+type bestEffortWriter struct{ w io.Writer }
+
+func (b bestEffortWriter) Write(p []byte) (int, error) {
+	_, _ = b.w.Write(p)
+	return len(p), nil
+}
+
 // Setup 初始化全局 logger：文件 + stderr（便于 `wails3 dev` 时观察）。
 // 返回的函数用于在退出时关闭文件。
 func Setup() func() {
@@ -140,7 +150,7 @@ func Setup() func() {
 		setupMu.Lock()
 		activeWriter = route
 		setupMu.Unlock()
-		slog.SetDefault(slog.New(slog.NewTextHandler(io.MultiWriter(os.Stderr, route), nil)))
+		slog.SetDefault(slog.New(slog.NewTextHandler(io.MultiWriter(bestEffortWriter{os.Stderr}, route), nil)))
 		return func() {
 			setupMu.Lock()
 			if activeWriter == route {
@@ -155,7 +165,7 @@ func Setup() func() {
 	setupMu.Lock()
 	activeWriter = route
 	setupMu.Unlock()
-	multi := io.MultiWriter(os.Stderr, route)
+	multi := io.MultiWriter(bestEffortWriter{os.Stderr}, route)
 	handler := slog.NewTextHandler(multi, &slog.HandlerOptions{Level: slog.LevelInfo})
 	slog.SetDefault(slog.New(handler))
 	slog.Info("日志已启用", "dir", dir)

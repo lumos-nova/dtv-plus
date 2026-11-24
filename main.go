@@ -11,6 +11,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"runtime/debug"
 	"sync"
 	"time"
 
@@ -89,6 +90,11 @@ func saveWindowState(state windowState) {
 /* ---------------------------------------------------------------------- 入口 */
 
 func main() {
+	// 后端以流式转发为主，堆常态很小；更勤快的 GC + 256MB 软上限
+	// 能压住录制/弹幕高峰后的驻留内存（软上限不会导致 OOM）。
+	debug.SetGCPercent(50)
+	debug.SetMemoryLimit(256 << 20)
+
 	closeLog := logging.Setup()
 	defer closeLog()
 
@@ -106,6 +112,12 @@ func main() {
 		// R-09：WebView2 缓存写到本机目录，不再进入漫游配置。
 		Windows: application.WindowsOptions{
 			WebviewUserDataPath: appdirs.Ensure(appdirs.WebView2Dir()),
+			// 内存/磁盘控制：JS 堆封顶 256MB（防多画面弹幕高峰失控），
+			// WebView2 磁盘缓存限 100MB。全局作用于共享的浏览器环境。
+			AdditionalBrowserArgs: []string{
+				"--js-flags=--max-old-space-size=256",
+				"--disk-cache-size=104857600",
+			},
 		},
 		// U-10：第二次启动只聚焦已有窗口，不再开第二份应用。
 		SingleInstance: &application.SingleInstanceOptions{

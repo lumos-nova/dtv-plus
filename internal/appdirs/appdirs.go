@@ -9,8 +9,12 @@ import (
 	"strings"
 )
 
-// ConfigDir 返回 %APPDATA%\DTV（窗口位置、用户配置等可漫游数据）。
+// ConfigDir 返回用户配置目录（窗口位置、存储设置等）。
+// 默认 <exe目录>\data\config；exe 目录不可写或开发/测试环境下回退 %APPDATA%\DTV。
 func ConfigDir() string {
+	if base := portableBase(); base != "" {
+		return filepath.Join(base, "config")
+	}
 	base, err := os.UserConfigDir()
 	if err != nil || base == "" {
 		base = "."
@@ -18,8 +22,12 @@ func ConfigDir() string {
 	return filepath.Join(base, "DTV")
 }
 
-// LocalAppData 返回 %LOCALAPPDATA%\DTV（缓存、日志、WebView2 数据等本机数据）。
+// LocalAppData 返回本机数据根目录（缓存、日志、WebView2 数据等）。
+// 默认 <exe目录>\data；exe 目录不可写或开发/测试环境下回退 %LOCALAPPDATA%\DTV。
 func LocalAppData() string {
+	if base := portableBase(); base != "" {
+		return base
+	}
 	base, err := os.UserCacheDir()
 	if err != nil || base == "" {
 		base = "."
@@ -44,6 +52,9 @@ func RecordingsDir() string {
 
 // WebView2Dir 返回 WebView2 用户数据目录（避免写入漫游配置）。
 func WebView2Dir() string {
+	if base := portableBase(); base != "" {
+		return filepath.Join(base, "webview2")
+	}
 	return filepath.Join(LocalAppData(), "WebView2")
 }
 
