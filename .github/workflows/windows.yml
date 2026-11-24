@@ -71,12 +71,45 @@ jobs:
       - name: Build MSI
         run: wails3 task windows:msi WIX_BIN="${{ env.WIX_BIN }}"
 
-      - name: Install NSIS
-        run: choco install nsis -y --no-progress
-
-      - name: Add NSIS to PATH
+      # Chocolatey 社区源偶发 503 且 choco 失败仍返回 0（见 2026-11-24 构建日志），
+      # 改为直接从 SourceForge 官方镜像下载 NSIS 压缩包，多镜像 + 重试 + makensis 自检。
+      - name: Install NSIS (direct download)
         shell: pwsh
-        run: '"C:\Program Files (x86)\NSIS" >> $env:GITHUB_PATH'
+        run: |
+          $nsisVersion = "3.11"
+          $dest = "$env:RUNNER_TEMP\nsis"
+          $zip = "$env:RUNNER_TEMP\nsis.zip"
+          $urls = @(
+            "https://downloads.sourceforge.net/project/nsis/NSIS%203/$nsisVersion/nsis-$nsisVersion.zip",
+            "https://master.dl.sourceforge.net/project/nsis/NSIS%203/$nsisVersion/nsis-$nsisVersion.zip?viasf=1",
+            "https://phoenixnap.dl.sourceforge.net/project/nsis/NSIS%203/$nsisVersion/nsis-$nsisVersion.zip"
+          )
+          $nsisDir = $null
+          foreach ($url in $urls) {
+            for ($attempt = 1; $attempt -le 3; $attempt++) {
+              try {
+                Write-Host "Downloading NSIS from $url (attempt $attempt)"
+                Invoke-WebRequest -Uri $url -OutFile $zip -UseBasicParsing -TimeoutSec 180
+                Expand-Archive -Path $zip -DestinationPath $dest -Force
+                # 官方 zip 内是 nsis-<version>/ 目录
+                $root = Get-ChildItem $dest -Directory | Where-Object { Test-Path (Join-Path $_.FullName "makensis.exe") } | Select-Object -First 1
+                $nsisDir = if ($root) { $root.FullName } elseif (Test-Path "$dest\makensis.exe") { $dest } else { $null }
+                if (-not $nsisDir) { throw "makensis.exe not found in archive" }
+                break
+              } catch {
+                Write-Warning "Attempt $attempt failed: $_"
+                Remove-Item $zip -Force -ErrorAction SilentlyContinue
+                Remove-Item $dest -Recurse -Force -ErrorAction SilentlyContinue
+                Start-Sleep -Seconds (5 * $attempt)
+              }
+            }
+            if ($nsisDir) { break }
+          }
+          if (-not $nsisDir) { throw "Failed to install NSIS from all mirrors" }
+          Add-Content -Path $env:GITHUB_PATH -Value $nsisDir
+          # 立即自检，失败就让本步骤红掉，而不是拖到 makensis 调用时才报 127
+          & "$nsisDir\makensis.exe" /VERSION
+          if ($LASTEXITCODE -ne 0) { throw "makensis not usable" }
 
       - name: Build NSIS installer (with WebView2 bootstrapper)
         run: wails3 task windows:create:nsis:installer SIGN_ENABLED=false INSTALL_SCOPE=user
