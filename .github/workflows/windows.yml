@@ -1,14 +1,15 @@
 name: Windows Installer
 
-# Windows 发布流水线：push 形如 v4.1.0 的 tag 时自动构建安装包并发布到 Releases；
-# 也可以在 Actions 页面手动 Run workflow（仅产出 artifacts，不发 Release）。
+# Windows 发布流水线：
+# - push v* tag：构建安装包并发布 GitHub Release
+# - workflow_dispatch：手动构建，仅上传 Actions Artifacts
 #
-# 产物（均为 per-user 安装、可选安装目录、未签名）：
-#   - DTV-<version>-amd64.msi        WiX v3 生成的 Windows Installer
-#   - DTV-<version>-amd64-setup.exe  NSIS 安装包，内置 WebView2 bootstrapper
+# MSI 与 NSIS 安装包分别构建、分别上传。
+# NSIS 下载/构建失败不会阻止已经成功生成的 MSI 被上传。
 #
-# 未配置 Authenticode 证书：首次运行可能触发 SmartScreen 提示，
-# 选择「更多信息 → 仍要运行」即可；MSI 与 NSIS 都不要求管理员权限。
+# 产物：
+#   DTV-<version>-amd64.msi
+#   DTV-<version>-amd64-setup.exe
 
 on:
   workflow_dispatch:
@@ -29,18 +30,22 @@ jobs:
     runs-on: windows-latest
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
 
-      - uses: actions/setup-go@v5
+      - name: Setup Go
+        uses: actions/setup-go@v5
         with:
           go-version: "1.26.x"
           cache-dependency-path: go.sum
 
-      - uses: pnpm/action-setup@v4
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
         with:
           version: 10
 
-      - uses: actions/setup-node@v4
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
         with:
           node-version: "22"
           cache: pnpm
@@ -52,92 +57,327 @@ jobs:
           go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0
           echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
 
-      - name: Install frontend deps
+      - name: Install frontend dependencies
         working-directory: frontend
         run: pnpm install --frozen-lockfile
 
-      # 与本地验证一致的构建参数：不要加 -trimpath / -buildvcs=false / production tag
-      # （Wails v3.0.0 纯 Go WebView2 loader 对这些敏感，见 build/windows/Taskfile.yml 注释）
-      - name: Build app (unsigned)
+      # 保留项目当前已验证的构建参数，不额外添加 -trimpath、
+      # -buildvcs=false 或 production tag。
+      - name: Build app
         run: wails3 build SIGN_ENABLED=false
 
-      - name: Download WiX v3
+      - name: Read application version
+        id: version
         shell: pwsh
         run: |
-          Invoke-WebRequest -Uri "https://github.com/wixtoolset/wix3/releases/download/wix3141rtm/wix314-binaries.zip" -OutFile "$env:RUNNER_TEMP\wix.zip"
-          Expand-Archive -Path "$env:RUNNER_TEMP\wix.zip" -DestinationPath "$env:RUNNER_TEMP\wix" -Force
-          "WIX_BIN=$env:RUNNER_TEMP\wix" >> $env:GITHUB_ENV
+          $ErrorActionPreference = "Stop"
+
+          $config = Get-Content "build/config.yml" -Raw
+          $match = [regex]::Match($config, '(?m)^\s*version:\s*["'']?([^"''\r\n#]+)["'']?\s*(?:#.*)?$')
+
+          if (!$match.Success) {
+            throw "version not found in build/config.yml"
+          }
+
+          $version = $match.Groups[1].Value.Trim()
+          if (!$version) {
+            throw "version in build/config.yml is empty"
+          }
+
+          "VERSION=$version" >> $env:GITHUB_ENV
+          "value=$version" >> $env:GITHUB_OUTPUT
+          Write-Host "Application version: $version"
+
+      # -------------------- Portable ZIP --------------------
+      # Wails build 已生成 bin/dtv.exe。便携包不运行 MSI/NSIS 安装流程，
+      # 将 EXE 和同目录的 DLL 一起打包；前端资源由 Wails 嵌入程序。
+      - name: Prepare portable package
+        id: prepare_portable
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          $sourceExe = "bin/dtv.exe"
+          $stage = "bin/portable"
+          $zip = "bin/DTV-$env:VERSION-amd64-portable.zip"
+
+          if (!(Test-Path $sourceExe)) {
+            throw "Portable executable not found: $sourceExe"
+          }
+
+          Remove-Item $stage -Recurse -Force -ErrorAction SilentlyContinue
+          New-Item -ItemType Directory -Path $stage -Force | Out-Null
+
+          Copy-Item $sourceExe (Join-Path $stage "dtv.exe") -Force
+
+          # 如果构建目录存在运行时 DLL，一并放在 EXE 同级目录。
+          Get-ChildItem "bin" -Filter "*.dll" -File |
+            Where-Object { $_.DirectoryName -eq (Resolve-Path "bin").Path } |
+            ForEach-Object {
+              Copy-Item $_.FullName $stage -Force
+            }
+
+          @"
+          DTV-Plus Windows amd64 portable package
+
+          Run dtv.exe to start the application.
+          This package does not install the application or create shortcuts.
+
+          Requirement:
+          Microsoft Edge WebView2 Runtime must be available on the target Windows system.
+          If the application does not start, install the WebView2 Runtime and try again.
+
+          User data and application settings may still be stored in the Windows user profile.
+          "@ | Set-Content (Join-Path $stage "README.txt") -Encoding UTF8
+
+          Compress-Archive -Path "$stage\*" -DestinationPath $zip -CompressionLevel Optimal -Force
+
+          if (!(Test-Path $zip) -or (Get-Item $zip).Length -eq 0) {
+            throw "Portable ZIP was not created"
+          }
+
+          $hash = (Get-FileHash $zip -Algorithm SHA256).Hash.ToLower()
+          "$hash  $(Split-Path $zip -Leaf)" |
+            Set-Content "$zip.sha256" -Encoding ASCII
+
+          Write-Host "Portable package: $zip"
+          Write-Host "SHA256: $hash"
+
+      - name: Upload portable artifact
+        id: upload_portable
+        if: steps.prepare_portable.outcome == 'success'
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-portable
+          path: |
+            bin/DTV-${{ env.VERSION }}-amd64-portable.zip
+            bin/DTV-${{ env.VERSION }}-amd64-portable.zip.sha256
+          if-no-files-found: error
+          retention-days: 14
+
+      # -------------------- MSI --------------------
+      - name: Download WiX v3
+        id: wix
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          $zip = Join-Path $env:RUNNER_TEMP "wix.zip"
+          $dest = Join-Path $env:RUNNER_TEMP "wix"
+
+          Invoke-WebRequest `
+            -Uri "https://github.com/wixtoolset/wix3/releases/download/wix3141rtm/wix314-binaries.zip" `
+            -OutFile $zip `
+            -TimeoutSec 180
+
+          if (!(Test-Path $zip) -or (Get-Item $zip).Length -eq 0) {
+            throw "WiX archive download failed or returned an empty file"
+          }
+
+          Expand-Archive -Path $zip -DestinationPath $dest -Force
+
+          if (!(Test-Path (Join-Path $dest "candle.exe")) -or
+              !(Test-Path (Join-Path $dest "light.exe"))) {
+            throw "candle.exe or light.exe not found in WiX archive"
+          }
+
+          "WIX_BIN=$dest" >> $env:GITHUB_ENV
 
       - name: Build MSI
+        id: build_msi
         run: wails3 task windows:msi WIX_BIN="${{ env.WIX_BIN }}"
 
-      # Chocolatey 社区源偶发 503 且 choco 失败仍返回 0（见 2026-11-24 构建日志），
-      # 改为直接从 SourceForge 官方镜像下载 NSIS 压缩包，多镜像 + 重试 + makensis 自检。
-      - name: Install NSIS (direct download)
+      - name: Prepare MSI artifact
+        id: prepare_msi
+        if: steps.build_msi.outcome == 'success'
         shell: pwsh
         run: |
+          $ErrorActionPreference = "Stop"
+
+          $source = "bin/dtv-amd64.msi"
+          $target = "bin/DTV-$env:VERSION-amd64.msi"
+
+          if (!(Test-Path $source)) {
+            throw "MSI output not found: $source"
+          }
+
+          Copy-Item $source $target -Force
+          Write-Host "Prepared MSI: $target"
+
+      - name: Upload MSI artifact
+        id: upload_msi
+        if: steps.prepare_msi.outcome == 'success'
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-msi
+          path: bin/DTV-${{ env.VERSION }}-amd64.msi
+          if-no-files-found: error
+          retention-days: 14
+
+      # -------------------- NSIS --------------------
+      # continue-on-error 确保 NSIS 下载失败不会阻止 MSI 交付。
+      - name: Install NSIS 3.11
+        id: install_nsis
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+
           $nsisVersion = "3.11"
-          $dest = "$env:RUNNER_TEMP\nsis"
-          $zip = "$env:RUNNER_TEMP\nsis.zip"
+          $dest = Join-Path $env:RUNNER_TEMP "nsis"
+          $zip = Join-Path $env:RUNNER_TEMP "nsis.zip"
+
           $urls = @(
             "https://downloads.sourceforge.net/project/nsis/NSIS%203/$nsisVersion/nsis-$nsisVersion.zip",
             "https://master.dl.sourceforge.net/project/nsis/NSIS%203/$nsisVersion/nsis-$nsisVersion.zip?viasf=1",
             "https://phoenixnap.dl.sourceforge.net/project/nsis/NSIS%203/$nsisVersion/nsis-$nsisVersion.zip"
           )
+
           $nsisDir = $null
+
           foreach ($url in $urls) {
-            for ($attempt = 1; $attempt -le 3; $attempt++) {
+            for ($attempt = 1; $attempt -le 2; $attempt++) {
               try {
                 Write-Host "Downloading NSIS from $url (attempt $attempt)"
-                Invoke-WebRequest -Uri $url -OutFile $zip -UseBasicParsing -TimeoutSec 180
+
+                Remove-Item $zip -Force -ErrorAction SilentlyContinue
+                Remove-Item $dest -Recurse -Force -ErrorAction SilentlyContinue
+                New-Item -ItemType Directory -Path $dest -Force | Out-Null
+
+                & curl.exe `
+                  --fail `
+                  --location `
+                  --retry 2 `
+                  --retry-all-errors `
+                  --retry-delay 5 `
+                  --connect-timeout 30 `
+                  --max-time 300 `
+                  --output $zip `
+                  $url
+
+                if ($LASTEXITCODE -ne 0) {
+                  throw "curl.exe failed with exit code $LASTEXITCODE"
+                }
+
+                if (!(Test-Path $zip) -or (Get-Item $zip).Length -eq 0) {
+                  throw "Downloaded NSIS ZIP is missing or empty"
+                }
+
                 Expand-Archive -Path $zip -DestinationPath $dest -Force
-                # 官方 zip 内是 nsis-<version>/ 目录
-                $root = Get-ChildItem $dest -Directory | Where-Object { Test-Path (Join-Path $_.FullName "makensis.exe") } | Select-Object -First 1
-                $nsisDir = if ($root) { $root.FullName } elseif (Test-Path "$dest\makensis.exe") { $dest } else { $null }
-                if (-not $nsisDir) { throw "makensis.exe not found in archive" }
+
+                $root = Get-ChildItem $dest -Directory |
+                  Where-Object {
+                    Test-Path (Join-Path $_.FullName "makensis.exe")
+                  } |
+                  Select-Object -First 1
+
+                if ($root) {
+                  $nsisDir = $root.FullName
+                }
+                elseif (Test-Path (Join-Path $dest "makensis.exe")) {
+                  $nsisDir = $dest
+                }
+                else {
+                  throw "makensis.exe not found in extracted NSIS archive"
+                }
+
                 break
-              } catch {
-                Write-Warning "Attempt $attempt failed: $_"
+              }
+              catch {
+                Write-Warning "NSIS attempt failed: $($_.Exception.GetType().FullName)"
+                Write-Warning "Message: $($_.Exception.Message)"
+                Write-Warning "Details: $($_ | Out-String)"
                 Remove-Item $zip -Force -ErrorAction SilentlyContinue
                 Remove-Item $dest -Recurse -Force -ErrorAction SilentlyContinue
                 Start-Sleep -Seconds (5 * $attempt)
               }
             }
-            if ($nsisDir) { break }
-          }
-          if (-not $nsisDir) { throw "Failed to install NSIS from all mirrors" }
-          Add-Content -Path $env:GITHUB_PATH -Value $nsisDir
-          # 立即自检，失败就让本步骤红掉，而不是拖到 makensis 调用时才报 127
-          & "$nsisDir\makensis.exe" /VERSION
-          if ($LASTEXITCODE -ne 0) { throw "makensis not usable" }
 
-      - name: Build NSIS installer (with WebView2 bootstrapper)
+            if ($nsisDir) {
+              break
+            }
+          }
+
+          if (!$nsisDir) {
+            throw "Failed to install NSIS $nsisVersion from all mirrors"
+          }
+
+          & (Join-Path $nsisDir "makensis.exe") /VERSION
+          if ($LASTEXITCODE -ne 0) {
+            throw "makensis.exe self-check failed"
+          }
+
+          Add-Content -Path $env:GITHUB_PATH -Value $nsisDir
+          "NSIS_BIN=$nsisDir" >> $env:GITHUB_ENV
+          Write-Host "NSIS installed successfully: $nsisDir"
+
+      - name: Build NSIS installer
+        id: build_nsis
+        if: steps.install_nsis.outcome == 'success'
+        continue-on-error: true
         run: wails3 task windows:create:nsis:installer SIGN_ENABLED=false INSTALL_SCOPE=user
 
-      - name: Rename artifacts with version
+      - name: Prepare NSIS artifact
+        id: prepare_nsis
+        if: steps.build_nsis.outcome == 'success'
         shell: pwsh
         run: |
-          $line = Get-Content build/config.yml | Select-String '^\s*version:\s*"([^"]+)"' | Select-Object -First 1
-          $version = $line.Matches[0].Groups[1].Value
-          if (-not $version) { throw "version not found in build/config.yml" }
-          Copy-Item bin/dtv-amd64.msi "bin/DTV-$version-amd64.msi"
-          Copy-Item bin/dtv-amd64-installer.exe "bin/DTV-$version-amd64-setup.exe"
-          "VERSION=$version" >> $env:GITHUB_ENV
+          $ErrorActionPreference = "Stop"
 
-      - uses: actions/upload-artifact@v4
+          $source = "bin/dtv-amd64-installer.exe"
+          $target = "bin/DTV-$env:VERSION-amd64-setup.exe"
+
+          if (!(Test-Path $source)) {
+            throw "NSIS output not found: $source"
+          }
+
+          Copy-Item $source $target -Force
+          Write-Host "Prepared NSIS installer: $target"
+
+      - name: Upload NSIS artifact
+        id: upload_nsis
+        if: steps.prepare_nsis.outcome == 'success'
+        uses: actions/upload-artifact@v4
         with:
-          name: windows-installers
-          path: |
-            bin/DTV-*-amd64.msi
-            bin/DTV-*-amd64-setup.exe
+          name: windows-nsis
+          path: bin/DTV-${{ env.VERSION }}-amd64-setup.exe
           if-no-files-found: error
+          retention-days: 14
 
-      - name: Publish Release
-        if: startsWith(github.ref, 'refs/tags/v')
+      # -------------------- Release --------------------
+      # 只要至少一个安装包成功上传，就允许 Tag 发布部分可用产物。
+      # NSIS 缺失时不会因为通配符未匹配而让 MSI Release 失败。
+      - name: Publish GitHub Release
+        if: >-
+          always() &&
+          startsWith(github.ref, 'refs/tags/v') &&
+          (steps.upload_msi.outcome == 'success' ||
+           steps.upload_nsis.outcome == 'success' ||
+           steps.upload_portable.outcome == 'success')
         uses: softprops/action-gh-release@v2
         with:
           files: |
             bin/DTV-*-amd64.msi
             bin/DTV-*-amd64-setup.exe
+            bin/DTV-*-amd64-portable.zip
+            bin/DTV-*-amd64-portable.zip.sha256
           generate_release_notes: true
-          fail_on_unmatched_files: true
+          fail_on_unmatched_files: false
+
+      - name: Report installer build results
+        if: always()
+        shell: pwsh
+        run: |
+          Write-Host "Version: $env:VERSION"
+          Write-Host "MSI build: ${{ steps.build_msi.outcome }}"
+          Write-Host "MSI upload: ${{ steps.upload_msi.outcome }}"
+          Write-Host "NSIS install: ${{ steps.install_nsis.outcome }}"
+          Write-Host "NSIS build: ${{ steps.build_nsis.outcome }}"
+          Write-Host "NSIS upload: ${{ steps.upload_nsis.outcome }}"
+          Write-Host "Portable upload: ${{ steps.upload_portable.outcome }}"
+
+          if ("${{ steps.upload_msi.outcome }}" -ne "success" -and
+              "${{ steps.upload_nsis.outcome }}" -ne "success" -and
+              "${{ steps.upload_portable.outcome }}" -ne "success") {
+            throw "No Windows package was successfully uploaded"
+          }
