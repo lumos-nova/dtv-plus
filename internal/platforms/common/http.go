@@ -2,6 +2,8 @@
 package common
 
 import (
+	"context"
+	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -128,6 +130,16 @@ func NewLimitedHttpClient(maxIdlePerHost int) *HttpClient {
 	transport.MaxIdleConnsPerHost = maxIdlePerHost
 	transport.IdleConnTimeout = 15 * time.Second
 	return c
+}
+
+// SetDialContext 替换底层拨号函数（仅测试用：把出站请求重定向到本地服务器）。
+func (c *HttpClient) SetDialContext(dial func(ctx context.Context, network, addr string) (net.Conn, error)) {
+	c.inner.Transport.(*http.Transport).DialContext = dial
+}
+
+// SetTLSClientConfig 替换 TLS 配置（仅测试用：信任本地自签证书）。
+func (c *HttpClient) SetTLSClientConfig(cfg *tls.Config) {
+	c.inner.Transport.(*http.Transport).TLSClientConfig = cfg
 }
 
 // Request 发送一次带默认头的请求（不自动重试）。

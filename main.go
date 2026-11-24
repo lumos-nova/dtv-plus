@@ -207,6 +207,10 @@ func main() {
 	app.RegisterService(application.NewService(douyinService))
 	app.RegisterService(application.NewService(bilibiliService))
 
+	// 开播提醒引擎：Go 侧常驻批量轮询（B 站 5s 批量 / 抖音 reflow 30s /
+	// 斗鱼 30s / 虎牙 60s），替代前端 60s 逐房间刷新，避免上百关注触发风控。
+	app.RegisterService(application.NewService(services.NewNotifyService(emit)))
+
 	// 独立录制：后端直接拉原流落盘，取流复用四个平台 Service（共享登录态）。
 	app.RegisterService(application.NewService(services.NewRecordingService(emit,
 		func(platform, roomID string) (*common.StreamInfo, error) {

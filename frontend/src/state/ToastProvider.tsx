@@ -23,10 +23,24 @@ interface ToastItem {
   tone: ToastTone;
   message: string;
   action?: ToastAction;
+  /** 大号样式（开播提醒用），普通反馈保持小 toast */
+  large?: boolean;
+}
+
+export interface ToastOptions {
+  action?: ToastAction;
+  durationMs?: number;
+  /** 大号样式 + 更醒目的排版，用于开播提醒 */
+  large?: boolean;
 }
 
 interface ToastContextValue {
-  toast: (message: string, tone?: ToastTone, action?: ToastAction, durationMs?: number) => void;
+  toast: (
+    message: string,
+    tone?: ToastTone,
+    actionOrOptions?: ToastAction | ToastOptions,
+    durationMs?: number,
+  ) => void;
 }
 
 const ToastContext = createContext<ToastContextValue | null>(null);
@@ -58,10 +72,18 @@ export function ToastProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const toast = useCallback<ToastContextValue["toast"]>(
-    (message, tone = "info", action, durationMs) => {
+    (message, tone = "info", actionOrOptions, durationMs) => {
+      const options: ToastOptions =
+        actionOrOptions && "onClick" in actionOrOptions
+          ? { action: actionOrOptions }
+          : (actionOrOptions ?? {});
       const id = ++seq.current;
-      setItems((prev) => [...prev.slice(-3), { id, tone, message, action }]);
-      const duration = durationMs ?? (action ? 6000 : 3200);
+      setItems((prev) => [
+        ...prev.slice(-3),
+        { id, tone, message, action: options.action, large: options.large },
+      ]);
+      const duration =
+        options.durationMs ?? durationMs ?? (options.action ? 6000 : 3200);
       const timer = window.setTimeout(() => dismiss(id), duration);
       timers.current.set(id, timer);
     },
@@ -85,8 +107,11 @@ export function ToastProvider({ children }: { children: ReactNode }) {
         {items.map((item) => {
           const Icon = TONE_ICON[item.tone];
           return (
-            <div key={item.id} className={`${styles.toast} ${styles[item.tone]}`}>
-              <Icon size={15} strokeWidth={2.4} className={styles.icon} />
+            <div
+              key={item.id}
+              className={`${styles.toast} ${styles[item.tone]}${item.large ? ` ${styles.large}` : ""}`}
+            >
+              <Icon size={item.large ? 20 : 15} strokeWidth={2.4} className={styles.icon} />
               <span className={styles.message}>{item.message}</span>
               {item.action && (
                 <button

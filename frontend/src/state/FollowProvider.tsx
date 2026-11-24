@@ -9,9 +9,11 @@ import {
   type ReactNode,
 } from "react";
 import { api, type LivePlatform, type Streamer } from "@/api";
+import { notifyApi, notifyEngineAvailable, type StatusPatch } from "@/api/notify";
 import { loadAppSettings } from "@/lib/appSettings";
 import { loadJSON, saveJSON, STORAGE_KEYS } from "@/lib/storage";
 import { liveTransitionKind, type LiveTransitionKind } from "./liveTransitions";
+import { applyNotifyPatches } from "./notifyPatches";
 import { useToast } from "./ToastProvider";
 
 /**
@@ -863,10 +865,14 @@ export function FollowProvider({ children }: { children: ReactNode }) {
               ? `🎬 ${item.nickname} 开始轮播${item.title ? `：${item.title}` : ""}`
               : `🔴 ${item.nickname} 开播了${item.title ? `：${item.title}` : ""}`,
             "info",
+            { large: true, durationMs: 15_000 },
           );
         }
         if (transitions.length > shown.length) {
-          toast(`还有 ${transitions.length - shown.length} 位关注主播开播了`, "info");
+          toast(`还有 ${transitions.length - shown.length} 位关注主播开播了`, "info", {
+            large: true,
+            durationMs: 15_000,
+          });
         }
       }
     } finally {
@@ -894,15 +900,89 @@ export function FollowProvider({ children }: { children: ReactNode }) {
     return () => window.clearTimeout(timer);
   }, []);
 
-  // 开播提醒轮询：每分钟刷新一次关注列表，跃迁时弹提醒（开关在设置里）
+  /* ------------------------------------------- Go 侧开播提醒引擎（主路径） */
+  // 引擎在 Go 侧分层轮询（B 站批量 5s / 抖音 reflow 30s / 斗鱼 30s / 虎牙 60s），
+  // 状态变化经 "notify-status" 事件推回来；这里只做展示与提醒。
+  // 浏览器预览 / mock 模式没有引擎，退回下面的 60s 定时刷新。
+  const engineActive = notifyEngineAvailable();
+
+  // 关注表变化 → 推给引擎（防抖 500ms，避免拖拽排序时连发 IPC）。
+  // 只依赖 platform:id 集合：状态补丁引起的 follows 变化不会重推。
+  const watchSignature = follows.map((f) => followKey(f.platform, f.id)).join("|");
   useEffect(() => {
+    if (!engineActive) return;
+    const timer = window.setTimeout(() => {
+      void notifyApi.setWatchList(
+        followsRef.current.map((f) => ({ platform: f.platform, id: f.id })),
+      );
+    }, 500);
+    return () => window.clearTimeout(timer);
+  }, [engineActive, watchSignature]);
+
+  // 设置里的"开播提醒"开关 → 引擎开关（设置保存时派发的 window 事件）
+  useEffect(() => {
+    if (!engineActive) return;
+    void notifyApi.setEnabled(loadAppSettings().liveNotifyEnabled);
+    const onSettings = () => {
+      void notifyApi.setEnabled(loadAppSettings().liveNotifyEnabled);
+    };
+    window.addEventListener("dtv:live-notify", onSettings);
+    return () => window.removeEventListener("dtv:live-notify", onSettings);
+  }, [engineActive]);
+
+  // 订阅引擎状态事件：应用补丁 + 复用既有跃迁/提醒语义
+  useEffect(() => {
+    if (!engineActive) return;
+    const applyPatches = (patches: StatusPatch[]) => {
+      const notifyEnabled = loadAppSettings().liveNotifyEnabled;
+      let transitions: { nickname: string; title: string; kind: LiveTransitionKind }[] = [];
+      setState((prev) => {
+        const result = applyNotifyPatches(prev.follows, patches);
+        if (!result.changed) return prev;
+        transitions = result.transitions;
+        return normalize({ ...prev, follows: result.records });
+      });
+      // 引擎启动即推首轮基线；基线建立前不提醒（与手动刷新一致）
+      if (!liveNotifyBaselineRef.current) {
+        liveNotifyBaselineRef.current = true;
+        return;
+      }
+      if (!notifyEnabled || transitions.length === 0) return;
+      const shown = transitions.slice(0, 3);
+      for (const item of shown) {
+        toast(
+          item.kind === "loop"
+            ? `🎬 ${item.nickname} 开始轮播${item.title ? `：${item.title}` : ""}`
+            : `🔴 ${item.nickname} 开播了${item.title ? `：${item.title}` : ""}`,
+          "info",
+          { large: true, durationMs: 15_000 },
+        );
+      }
+      if (transitions.length > shown.length) {
+        toast(`还有 ${transitions.length - shown.length} 位关注主播开播了`, "info", {
+          large: true,
+          durationMs: 15_000,
+        });
+      }
+    };
+    const off = notifyApi.onStatus(applyPatches);
+    // 订阅后先拉一次快照做初始同步（覆盖订阅前引擎已知的状态）
+    void notifyApi.snapshot().then((patches) => {
+      if (patches.length > 0) applyPatches(patches);
+    });
+    return off;
+  }, [engineActive, toast]);
+
+  // 兜底轮询：没有 Go 引擎（浏览器预览 / mock）时保持旧的 60s 刷新
+  useEffect(() => {
+    if (engineActive) return;
     const timer = window.setInterval(() => {
       if (followsRef.current.length === 0) return;
       if (!loadAppSettings().liveNotifyEnabled) return;
       void refreshStatusesRef.current();
     }, 60_000);
     return () => window.clearInterval(timer);
-  }, []);
+  }, [engineActive]);
 
   const value = useMemo<FollowContextValue>(
     () => ({

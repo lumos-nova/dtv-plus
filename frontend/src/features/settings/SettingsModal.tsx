@@ -51,6 +51,11 @@ export function SettingsModal({ onClose }: { onClose: () => void }) {
         new CustomEvent("dtv:replay-seconds", { detail: { seconds: next.replaySeconds } }),
       );
     }
+    if (typeof next.liveNotifyEnabled === "boolean") {
+      window.dispatchEvent(
+        new CustomEvent("dtv:live-notify", { detail: { enabled: next.liveNotifyEnabled } }),
+      );
+    }
   };
 
   const pickDirectory = async (field: keyof StorageDirs) => {

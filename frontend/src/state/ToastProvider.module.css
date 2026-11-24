@@ -1,7 +1,8 @@
 .viewport {
   position: fixed;
   right: 18px;
-  bottom: 18px;
+  /* 顶栏（--navbar-height）下方，避免遮住窗口按钮 */
+  top: calc(var(--navbar-height, 64px) + 10px);
   z-index: 10000;
   display: flex;
   flex-direction: column;
@@ -30,12 +31,34 @@
 @keyframes toast-in {
   from {
     opacity: 0;
-    transform: translateY(8px);
+    transform: translateY(-8px);
   }
   to {
     opacity: 1;
     transform: none;
   }
+}
+
+/* 开播提醒的大号样式 */
+.large {
+  gap: 12px;
+  min-height: 52px;
+  padding: 12px 12px 12px 16px;
+  font-size: var(--text-md);
+  font-weight: var(--weight-semibold);
+}
+
+.viewport:has(.large) {
+  max-width: min(480px, calc(100vw - 36px));
+}
+
+.large .message {
+  line-height: 1.5;
+}
+
+.large .close {
+  width: 28px;
+  height: 28px;
 }
 
 .icon {

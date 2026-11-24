@@ -29,7 +29,7 @@ import { useDanmuPreferences } from "@/features/player/useDanmuPreferences";
 import { loadAppSettings } from "@/lib/appSettings";
 import { useXgPlayer, type PlayerSource } from "@/features/player/useXgPlayer";
 import { cn } from "@/lib/cn";
-import { isFatalError, stripFatalPrefix } from "@/lib/errors";
+import { isFatalError, isRiskControlError, stripFatalPrefix } from "@/lib/errors";
 import { platformHomePath } from "@/lib/navigation";
 import { loadJSON, loadRaw, saveJSON, saveRaw, STORAGE_KEYS } from "@/lib/storage";
 import { prepareStreamRelay, supportsStreamRelay } from "@/lib/streamRelay";
@@ -190,14 +190,15 @@ export function PlayerPage() {
    * 新地址回来后 `streamRevision` 变化会强制重建播放器实例。
    */
   const scheduleReconnect = useCallback(
-    (immediate = false) => {
+    (immediate = false, minDelayMs = 0) => {
       if (!roomId || roomOfflineRef.current) return;
       const attempt = reconnectAttemptRef.current + 1;
       reconnectAttemptRef.current = attempt;
       setRetryAttempt(attempt);
       setReconnecting(true);
 
-      const delay = immediate ? 0 : Math.min(30_000, 2_000 * 2 ** Math.min(attempt - 1, 4));
+      const backoff = Math.min(30_000, 2_000 * 2 ** Math.min(attempt - 1, 4));
+      const delay = immediate ? 0 : Math.max(minDelayMs, backoff);
       clearReconnectTimer();
       reconnectTimerRef.current = window.setTimeout(() => {
         reconnectTimerRef.current = null;
@@ -372,9 +373,11 @@ export function PlayerPage() {
         if (cancelled || roomOfflineRef.current) return;
         const message = err instanceof Error ? err.message : "房间信息加载失败";
         setInfoError(stripFatalPrefix(message));
-        // 房间不存在 / 被风控拦截 / 房间号无效 等错误不重试
-        // 其余按退避重试；确认下播会由轻量检查 / 复核分支停掉。
-        if (!isFatalError(message)) scheduleReconnect();
+        // 房间不存在 / 房间号无效 等错误不重试；
+        // 风控拦截是临时状态（几分钟内自行解除），用 ≥30s 的长退避自动重试；
+        // 其余按普通退避重试；确认下播会由轻量检查 / 复核分支停掉。
+        if (isRiskControlError(message)) scheduleReconnect(false, 30_000);
+        else if (!isFatalError(message)) scheduleReconnect();
       })
       .finally(() => {
         if (!cancelled) setLoadingInfo(false);

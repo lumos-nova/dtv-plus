@@ -380,7 +380,7 @@ func (s *danmakuSession) resolveCredentials() (*wsCredentials, error) {
 		return nil, fmt.Errorf("抖音房间号无效: %q", s.roomID)
 	}
 
-	html, err := s.manager.client.fetchRoomPage(webRID)
+	html, err := s.manager.client.guardedRoomPage(webRID)
 	if err != nil {
 		return nil, err
 	}

@@ -43,6 +43,16 @@ var blockedMarkers = []string{
 	"验证码中间页",
 }
 
+// htmlBlocked 判断房间页是否为风控验证码中间页。
+func htmlBlocked(html string) bool {
+	for _, mark := range blockedMarkers {
+		if strings.Contains(html, mark) {
+			return true
+		}
+	}
+	return false
+}
+
 // roomIDPattern 匹配页面内嵌 JSON 里的内部 roomId。
 //
 // 页面里的 JSON 是转义过的（形如 \"roomId\":\"7702034233618877218\"），
@@ -348,24 +358,11 @@ type roomBundle struct {
 }
 
 // resolveRoom 拉一个房间的完整数据（页面 → 内部 id → reflow）。
-func (c *Client) resolveRoom(roomID string) (*roomBundle, error) {
-	webRID := NormalizeRoomID(roomID)
-	if webRID == "" {
-		return nil, common.Fatal("抖音房间号无效: %q", roomID)
-	}
-
-	html, err := c.fetchRoomPage(webRID)
+// webRID 必须已经过 NormalizeRoomID；对外入口是 resolveRoomCached。
+func (c *Client) resolveRoom(webRID string) (*roomBundle, error) {
+	html, err := c.guardedRoomPage(webRID)
 	if err != nil {
 		return nil, err
-	}
-
-	// log.Printf("[Douyin] 房间 %s 查找 roomId，页面内容：%s", webRID, html) // 开发时使用
-
-	// 页面里出现以下任一标记说明请求被服务器拦截（风控/验证码）。
-	for _, mark := range blockedMarkers {
-		if strings.Contains(html, mark) {
-			return nil, common.Fatal("本次请求受到服务器拦截，请稍后再试")
-		}
 	}
 
 	internalID := extractInternalRoomID(html)
@@ -701,7 +698,7 @@ func viewersOf(room *reflowRoom) int64 {
 
 // Streamer 拉房间卡片信息（不含取流）。
 func (c *Client) Streamer(roomID string) (common.Streamer, error) {
-	bundle, err := c.resolveRoom(roomID)
+	bundle, err := c.resolveRoomCached(roomID)
 	if err != nil {
 		return common.Streamer{}, err
 	}
@@ -745,7 +742,7 @@ func isRoomLive(room *reflowRoom) bool {
 // 抖音没有"多线路"概念（flv_pull_url 里每个 key 就是一个清晰度），
 // 所以 Lines 恒为空，清晰度全部由 Variants 承担。
 func (c *Client) StreamInfo(roomID, line string) (*common.StreamInfo, error) {
-	bundle, err := c.resolveRoom(roomID)
+	bundle, err := c.resolveRoomCached(roomID)
 	if err != nil {
 		return nil, err
 	}

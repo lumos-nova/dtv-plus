@@ -40,7 +40,36 @@ type Client struct {
 	mu       sync.Mutex
 	warmedAt time.Time
 	warmErr  error
+
+	// 房间页缓存 + 风控冷却。见 roomCache / guardedRoomPage。
+	rooms        map[string]*roomCacheEntry
+	blockedUntil time.Time
 }
+
+// roomCacheEntry 缓存一次"房间页 → 内部 roomId → reflow"的完整结果。
+//
+// 播放页每次加载会连发 getRoomInfo + getStreamInfo 两个请求，关注列表
+// 刷新失败时还会再补一次取流请求——都打到同一个房间页上。抖音对房间页
+// 的访问频率极其敏感（实测每分钟一轮、并发 6 的关注刷新就能触发滑块
+// 验证码中间页），所以短 TTL 内合并复用同一份结果。
+type roomCacheEntry struct {
+	mu   sync.Mutex
+	done bool
+	at   time.Time
+	bundle *roomBundle
+	err    error
+}
+
+const (
+	// roomCacheTTL 直播状态/取流地址的复用窗口。FLV 地址本身有效期远超
+	// 30s，取流失败时前端的重连路径会带新请求进来，TTL 到期自然刷新。
+	roomCacheTTL = 30 * time.Second
+	// blockedCooldown 命中验证码中间页后的全局冷却：期间不再打房间页，
+	// 直接返回缓存或"稍后再试"错误，避免持续撞风控把拦截时间越拖越长。
+	blockedCooldown = 90 * time.Second
+	// blockedRetryDelay 首次命中拦截时的一次延迟重试间隔（拦截常为瞬时）。
+	blockedRetryDelay = 2 * time.Second
+)
 
 // NewClient 创建抖音客户端。
 //
@@ -49,9 +78,137 @@ type Client struct {
 // cookie，所以从来没有这笔开销）。实测列表接口不带 cookie 也能正常返回，
 // 预热只是为了拿到 ttwid 并顺手把 TLS 连接暖起来，绝不该阻塞首屏。
 func NewClient() *Client {
-	c := &Client{http: common.NewHttpClient()}
+	c := &Client{http: common.NewHttpClient(), rooms: make(map[string]*roomCacheEntry)}
 	go func() { _ = c.warmup() }()
 	return c
+}
+
+// isBlockedError 判断错误是否为风控拦截（验证码中间页 / HTTP 4xx）。
+func isBlockedError(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "服务器拦截")
+}
+
+// noteBlocked 记录一次拦截，进入全局冷却。
+func (c *Client) noteBlocked() {
+	c.mu.Lock()
+	c.blockedUntil = time.Now().Add(blockedCooldown)
+	c.mu.Unlock()
+}
+
+// coolingDown 报告当前是否处于风控冷却期。
+func (c *Client) coolingDown() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return time.Now().Before(c.blockedUntil)
+}
+
+// guardedRoomPage 带风控保护的房间页请求：
+//   - 冷却期内直接失败（调用方可回退到缓存）；
+//   - 首次命中拦截时等 2s 重试一次（实测拦截常为瞬时，重试即恢复）；
+//   - 仍被拦截则进入 90s 全局冷却。
+func (c *Client) guardedRoomPage(webRID string) (string, error) {
+	if c.coolingDown() {
+		return "", common.Fatal("本次请求受到服务器拦截（风控冷却中），请稍后再试")
+	}
+	html, err := c.fetchRoomPage(webRID)
+	if err == nil && !htmlBlocked(html) {
+		return html, nil
+	}
+	if err != nil && !isBlockedError(err) {
+		return "", err // 网络类错误照旧透传，不算风控
+	}
+	time.Sleep(blockedRetryDelay)
+	if c.coolingDown() {
+		return "", common.Fatal("本次请求受到服务器拦截（风控冷却中），请稍后再试")
+	}
+	html, err = c.fetchRoomPage(webRID)
+	if err != nil {
+		if isBlockedError(err) {
+			c.noteBlocked()
+		}
+		return "", err
+	}
+	if htmlBlocked(html) {
+		c.noteBlocked()
+		return "", common.Fatal("本次请求受到服务器拦截，请稍后再试")
+	}
+	return html, nil
+}
+
+// cachedRoom 返回 TTL 内的缓存结果；没有或已过期返回 nil。
+func (c *Client) cachedRoom(webRID string, allowStale bool) *roomBundle {
+	c.mu.Lock()
+	entry := c.rooms[webRID]
+	c.mu.Unlock()
+	if entry == nil {
+		return nil
+	}
+	entry.mu.Lock()
+	defer entry.mu.Unlock()
+	if !entry.done || entry.err != nil {
+		return nil
+	}
+	if allowStale || time.Since(entry.at) < roomCacheTTL {
+		return entry.bundle
+	}
+	return nil
+}
+
+// resolveRoomCached 是 resolveRoom 的缓存/合并入口：
+//   - TTL 内直接复用（播放页的 getRoomInfo + getStreamInfo 合并成一次上游请求）；
+//   - 并发同房间请求单飞（只放一个请求出去，其余等结果）；
+//   - 风控冷却期内允许回退到过期缓存（有旧数据总比报错好）。
+func (c *Client) resolveRoomCached(roomID string) (*roomBundle, error) {
+	webRID := NormalizeRoomID(roomID)
+	if webRID == "" {
+		return nil, common.Fatal("抖音房间号无效: %q", roomID)
+	}
+
+	if bundle := c.cachedRoom(webRID, false); bundle != nil {
+		return bundle, nil
+	}
+
+	c.mu.Lock()
+	// 顺手清理过期条目，避免长期运行时 map 无限增长。
+	// TryLock：条目锁可能被进行中的请求长期持有（锁序是 entry.mu → c.mu），
+	// 拿不到就跳过，绝不能在这里阻塞等条目锁。
+	if len(c.rooms) > 256 {
+		for rid, e := range c.rooms {
+			if !e.mu.TryLock() {
+				continue
+			}
+			stale := e.done && time.Since(e.at) > 10*roomCacheTTL
+			e.mu.Unlock()
+			if stale {
+				delete(c.rooms, rid)
+			}
+		}
+	}
+	entry := c.rooms[webRID]
+	if entry == nil {
+		entry = &roomCacheEntry{}
+		c.rooms[webRID] = entry
+	}
+	c.mu.Unlock()
+
+	entry.mu.Lock()
+	defer entry.mu.Unlock()
+	// 双检：等锁期间别的请求可能已刷新完成
+	if entry.done && entry.err == nil && time.Since(entry.at) < roomCacheTTL {
+		return entry.bundle, nil
+	}
+
+	bundle, err := c.resolveRoom(webRID)
+	if err != nil && isBlockedError(err) && entry.done && entry.err == nil && entry.bundle != nil {
+		// 风控期间回退过期缓存：地址可能仍有效，状态稍旧但可看。
+		// 注意这里已持有 entry.mu，直接读字段，不能再走 cachedRoom（会死锁）。
+		return entry.bundle, nil
+	}
+	entry.done = true
+	entry.at = time.Now()
+	entry.bundle = bundle
+	entry.err = err
+	return bundle, err
 }
 
 // warmup 访问一次直播首页以获取 cookie（ttwid 等）。
