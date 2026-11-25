@@ -73,15 +73,20 @@ jobs:
           $ErrorActionPreference = "Stop"
 
           $config = Get-Content "build/config.yml" -Raw
-          $match = [regex]::Match($config, '(?m)^\s*version:\s*["'']?([^"''\r\n#]+)["'']?\s*(?:#.*)?$')
+          # 必须取 info 块里的应用版本；config.yml 顶部的 `version: '3'`
+          # 是 Taskfile schema 版本，曾被误匹配导致产物命名成 DTV-3-*。
+          $match = [regex]::Match($config, '(?ms)^info:\s*.*?^[ \t]+version:\s*["'']?([^"''\r\n#]+)["'']?\s*(?:#.*)?$')
 
           if (!$match.Success) {
-            throw "version not found in build/config.yml"
+            throw "info.version not found in build/config.yml"
           }
 
           $version = $match.Groups[1].Value.Trim()
           if (!$version) {
-            throw "version in build/config.yml is empty"
+            throw "info.version in build/config.yml is empty"
+          }
+          if ($version -notmatch '^\d+(\.\d+){1,3}$') {
+            throw "info.version '$version' is not a dotted version (got schema version?)"
           }
 
           "VERSION=$version" >> $env:GITHUB_ENV
