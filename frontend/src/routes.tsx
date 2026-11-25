@@ -30,9 +30,8 @@ function PlayerRedirect() {
  *（trailingSlash: true），且 `usePathname()` 的比较在 4 个组件里各自硬编码。
  * 这里集中一张表；URL 形状保持一致，以便沿用旧的深链接习惯。
  *
- * `/custom` 是旧版"自定义分区"的地址，现在改叫订阅分区（`/subscribe`），
- * `/player` 是已移除的单房间播放页 —— 各保留一条重定向，
- * 旧的书签/深链接不会 404。
+ * `/custom`、`/subscribe` 是已移除的订阅分区页旧地址，`/player` 是已移除的
+ * 单房间播放页 —— 各保留一条重定向，旧书签/深链接不会 404。
  */
 export const ROUTES = {
   home: "/",

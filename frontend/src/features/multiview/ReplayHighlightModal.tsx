@@ -17,7 +17,7 @@ import {
   type HighlightSelection,
 } from "./highlightTimeline";
 import { exportHighlight } from "./replayExport";
-import { saveRecording, toBase64 } from "./saveRecording";
+import { saveRecording } from "./saveRecording";
 import styles from "./ReplayHighlightModal.module.css";
 
 const GIF_WIDTHS = [320, 480, 640];
@@ -192,16 +192,10 @@ export function ReplayHighlightModal({
         onWarning: (message) => toast(message, "info"),
       });
       const filename = `dtv-highlight-${Date.now()}.${format === "gif" ? "gif" : "mp4"}`;
-      if (isWailsRuntime()) {
-        const bytes = new Uint8Array(await output.arrayBuffer());
-        const saved = await DataTransfer.SaveRecordingToHighlights(toBase64(bytes), filename);
-        if (saved?.path) {
-          setExportedPath(saved.path);
-          toast(`精彩片段已保存：${saved.path}`, "success");
-        }
-      } else {
-        const saved = await saveRecording(output, filename);
-        setExportedPath(saved ?? filename);
+      const saved = await saveRecording(output, filename, "highlights");
+      if (saved) {
+        setExportedPath(saved);
+        if (isWailsRuntime()) toast(`精彩片段已保存：${saved}`, "success");
       }
     } catch (error) {
       toast(error instanceof Error ? `导出失败：${error.message}` : "导出失败", "error");

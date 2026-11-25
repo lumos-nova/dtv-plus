@@ -17,6 +17,7 @@ import (
 	"sync"
 	"time"
 
+	"dtv/internal/logging"
 	"dtv/internal/platforms/douyu"
 )
 
@@ -152,6 +153,8 @@ func (s *StreamRelayService) prepare(platform, roomID, quality, line string) (*R
 		existing.lastAccess = now
 		baseURL, token := s.baseURL, s.token
 		s.mu.Unlock()
+		logging.LiveLog("relay.prepare", "platform", platform, "room", roomID,
+			"quality", quality, "line", line, "session", id, "reused", true)
 		return &RelayStreamInfo{
 			URL:       relayURL(baseURL, token, id),
 			SessionID: id,
@@ -184,6 +187,8 @@ func (s *StreamRelayService) prepare(platform, roomID, quality, line string) (*R
 	}
 	baseURL, token := s.baseURL, s.token
 	s.mu.Unlock()
+	logging.LiveLog("relay.prepare", "platform", platform, "room", roomID,
+		"quality", quality, "line", line, "session", id, "reused", false)
 
 	return &RelayStreamInfo{URL: relayURL(baseURL, token, id), SessionID: id}, nil
 }
@@ -276,6 +281,7 @@ func (s *StreamRelayService) handleStream(w http.ResponseWriter, r *http.Request
 	upstream, err := s.resolveStreamURL(ctx, snapshot)
 	if err != nil {
 		slog.Warn("直播流中继取流失败", "room", snapshot.roomID, "error", err)
+		logging.LiveLog("relay.resolve", "room", snapshot.roomID, "result", "error", "error", err.Error())
 		http.Error(w, err.Error(), http.StatusBadGateway)
 		return
 	}
@@ -283,6 +289,7 @@ func (s *StreamRelayService) handleStream(w http.ResponseWriter, r *http.Request
 	body, err := s.openUpstream(ctx, upstream, snapshot.roomID)
 	if err != nil {
 		slog.Warn("直播流中继连接上游失败", "room", snapshot.roomID, "error", err)
+		logging.LiveLog("relay.upstream", "room", snapshot.roomID, "result", "error", "error", err.Error())
 		code := http.StatusBadGateway
 		if errors.Is(err, errStreamOffline) {
 			code = http.StatusServiceUnavailable
@@ -320,16 +327,27 @@ func (s *StreamRelayService) handleStream(w http.ResponseWriter, r *http.Request
 	}
 
 	renew := snapshot.platform == "douyu"
+	streamStarted := time.Now()
+	logging.LiveLog("relay.stream", "room", snapshot.roomID, "platform", snapshot.platform,
+		"session", snapshot.id, "result", "open")
+	defer func() {
+		logging.LiveLog("relay.stream", "room", snapshot.roomID, "session", snapshot.id,
+			"result", "closed", "seconds", int64(time.Since(streamStarted).Seconds()))
+	}()
 	// 不再做音视频时间戳改写：只保留 300 秒续流，避免任何猜测性的偏移。
 	relayFlv(ctx, flvSink{w: w, flush: flush}, body, open, renew, false,
 		func(elapsed time.Duration, switchErr error) {
 			if switchErr != nil {
 				slog.Warn("直播流续流失败，准备重试",
 					"room", snapshot.roomID, "segment", elapsed.Round(time.Second), "error", switchErr)
+				logging.LiveLog("relay.renew", "room", snapshot.roomID,
+					"segmentSec", int64(elapsed.Seconds()), "result", "error", "error", switchErr.Error())
 				return
 			}
 			slog.Info("直播流已接续新的一段",
 				"room", snapshot.roomID, "segment", elapsed.Round(time.Second))
+			logging.LiveLog("relay.renew", "room", snapshot.roomID,
+				"segmentSec", int64(elapsed.Seconds()), "result", "ok")
 		})
 }
 

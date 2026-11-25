@@ -3,6 +3,7 @@ import { douyinApi } from "./douyin";
 import { douyuApi } from "./douyu";
 import { huyaApi } from "./huya";
 import { mockApi } from "./mock";
+import { prepareStreamRelay, supportsStreamRelay } from "@/lib/streamRelay";
 import type {
   Category,
   CategoryGroup,
@@ -119,6 +120,22 @@ function listStreamers(
  * 按平台分流。已接入的平台走真实后端，其余继续用假数据，
  * 这样首页/播放页可以在多平台之间无缝切换而不会因为"未实现"直接报错。
  */
+/**
+ * 只取平台原始流信息，不登记本地流中继。
+ * 关注列表的状态刷新只需要 isLive / 昵称等字段，用它可以避免为每个关注房间
+ * 白建一条中继会话（会话表有 64 条上限，会被 LRU 挤掉正在播放的会话）。
+ */
+export function getStreamInfoRaw(
+  platform: LivePlatform,
+  roomId: string,
+  line?: string | null,
+): Promise<StreamInfo> {
+  const adapter = adapterFor(platform);
+  return adapter
+    ? adapter.getStreamInfo(roomId, line)
+    : mockApi.getStreamInfo(platform, roomId);
+}
+
 export const api: DtvApi = {
   listCategories(platform) {
     const adapter = adapterFor(platform);
@@ -169,10 +186,23 @@ export const api: DtvApi = {
   },
 
   getStreamInfo(platform, roomId, line) {
-    const adapter = adapterFor(platform);
-    return adapter
-      ? adapter.getStreamInfo(roomId, line)
-      : mockApi.getStreamInfo(platform, roomId);
+    const request = getStreamInfoRaw(platform, roomId, line);
+    if (!supportsStreamRelay(platform)) return request;
+
+    // 斗鱼 FLV 直链只有 300 秒寿命，统一换成 Go 侧带续流的本地中继地址。
+    // 登记失败时保留原直链（prepareStreamRelay 内部已回退），不让直播整体失败。
+    return request.then(async (info) => {
+      if (!info.isLive || info.variants.length === 0) return info;
+      const variants = await Promise.all(
+        info.variants.map(async (variant) => {
+          if (variant.format !== "flv") return variant;
+          const relayURL = await prepareStreamRelay(roomId, variant.id, line ?? "");
+          if (!relayURL) return variant;
+          return { ...variant, url: relayURL, urls: [relayURL] };
+        }),
+      );
+      return { ...info, variants };
+    });
   },
 
   subscribeDanmaku(platform, roomId, onMessage) {

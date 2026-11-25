@@ -6,6 +6,7 @@ import (
 	"log"
 	"log/slog"
 	"strings"
+	"time"
 
 	"dtv/internal/platforms/bilibili"
 	"dtv/internal/platforms/common"
@@ -90,12 +91,14 @@ func (s *BilibiliService) SearchRoom(keyword string) ([]common.SearchHit, error)
 }
 
 // GetStreamInfo 播放页主入口：房间信息 + 全部清晰度。
-func (s *BilibiliService) GetStreamInfo(roomID string, line string) (*common.StreamInfo, error) {
+func (s *BilibiliService) GetStreamInfo(roomID string, line string) (info *common.StreamInfo, err error) {
 	roomID = strings.TrimSpace(roomID)
+	started := time.Now()
+	defer func() { logLiveFetch("bilibili", roomID, line, started, info, err) }()
 	if roomID == "" {
 		return nil, fmt.Errorf("缺少房间号")
 	}
-	info, err := s.client.StreamInfo(roomID, strings.TrimSpace(line))
+	info, err = s.client.StreamInfo(roomID, strings.TrimSpace(line))
 	if err != nil {
 		log.Printf("[BilibiliService] 取流信息失败 room=%s line=%s: %v", roomID, line, err)
 		slog.Warn("B站取流信息失败", "room", roomID, "line", line, "error", err)

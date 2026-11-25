@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"strings"
+	"time"
 
 	"dtv/internal/platforms/common"
 	"dtv/internal/platforms/huya"
@@ -87,12 +88,14 @@ func (s *HuyaService) SearchAnchor(keyword string) ([]common.SearchHit, error) {
 }
 
 // GetStreamInfo 播放页主入口：房间信息 + 全部清晰度 + 全部线路。
-func (s *HuyaService) GetStreamInfo(roomID string, line string) (*common.StreamInfo, error) {
+func (s *HuyaService) GetStreamInfo(roomID string, line string) (info *common.StreamInfo, err error) {
 	roomID = strings.TrimSpace(roomID)
+	started := time.Now()
+	defer func() { logLiveFetch("huya", roomID, line, started, info, err) }()
 	if roomID == "" {
 		return nil, fmt.Errorf("缺少房间号")
 	}
-	info, err := s.client.StreamInfo(roomID, strings.TrimSpace(line))
+	info, err = s.client.StreamInfo(roomID, strings.TrimSpace(line))
 	if err != nil {
 		log.Printf("[HuyaService] 取流信息失败 room=%s line=%s: %v", roomID, line, err)
 		return nil, err

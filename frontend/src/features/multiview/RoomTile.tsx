@@ -1,5 +1,5 @@
 import { FolderPlus, History, Share2, Star, Video } from "lucide-react";
-import { useEffect, useRef, useState, type PointerEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type PointerEvent } from "react";
 import { createPortal } from "react-dom";
 import { api, PLATFORM_LABEL, type DanmakuMessage, type StreamInfo } from "@/api";
 import { DanmuOverlay } from "@/features/player/DanmuOverlay";
@@ -8,7 +8,10 @@ import { isDanmuBlocked, type DanmuUserSettings } from "@/features/player/danmuS
 import { PlayerChrome } from "@/features/player/PlayerChrome";
 import { useXgPlayer } from "@/features/player/useXgPlayer";
 import { cn } from "@/lib/cn";
+import { reportLiveEvent } from "@/lib/liveLog";
 import { usePortalHost } from "@/lib/portal";
+import { BILIBILI_AUTH_EVENT } from "@/state/BilibiliAuthProvider";
+import { DOUYU_AUTH_EVENT } from "@/state/DouyuAuthProvider";
 import { useFollow } from "@/state/FollowProvider";
 import { useToast } from "@/state/ToastProvider";
 import {
@@ -25,6 +28,7 @@ import { liveRoomShareUrl } from "./roomUrl";
 import { GroupAssignDialog } from "./GroupAssignDialog";
 import { ReplayHighlightModal } from "./ReplayHighlightModal";
 import { useRoomRecording } from "./useRoomRecording";
+import { recoveryDelay, shouldAutoRecover } from "./recovery";
 import { pickTileVariant } from "./tileQuality";
 import styles from "./RoomTile.module.css";
 
@@ -33,6 +37,12 @@ const MESSAGE_FLUSH_MS = 150;
 const ROOM_DRAG_HOLD_MS = 220;
 /** 卡片内鼠标静止多久后自动隐藏控制栏 / 主播信息 */
 const CHROME_IDLE_MS = 2000;
+/** 取流 IPC 的前端超时；Go 侧最坏 90s，这里提前判定并进入自愈 */
+const STREAM_INFO_TIMEOUT_MS = 15_000;
+/** 确认离线/无档位后的轮询间隔（旧播放页的 30s 刷新在重构中丢失） */
+const OFFLINE_REFRESH_MS = 30_000;
+/** 错误与看门狗可能同时触发，短时间内只自愈一次 */
+const RECOVER_THROTTLE_MS = 400;
 let lastRoomDragEndedAt = 0;
 
 const RESIZE_HANDLES: { direction: ResizeDirection; className: string; label: string }[] = [
@@ -139,6 +149,10 @@ export function RoomTile({
   const blockKeywordsLowerRef = useRef(blockKeywordsLower);
   blockKeywordsLowerRef.current = blockKeywordsLower;
   const reconnectAttemptRef = useRef(0);
+  const backoffTimerRef = useRef<number | null>(null);
+  const lastRecoverAtRef = useRef(0);
+  // 统一自愈入口：在下方 render 期间填充，取流 effect 通过 ref 调用。
+  const recoverRef = useRef<(reason: string) => void>(() => {});
   const [info, setInfo] = useState<StreamInfo | null>(null);
   const [infoError, setInfoError] = useState("");
   const [retryKey, setRetryKey] = useState(0);
@@ -317,10 +331,21 @@ export function RoomTile({
 
   useEffect(() => {
     let cancelled = false;
+    let timeoutId: number | null = null;
     setInfo(null);
     setInfoError("");
-    void api
-      .getStreamInfo(room.platform, room.roomId, room.lineId)
+
+    // IPC 没有内建超时；上游 HTTP 最坏约 90s，超过 15s 就当失败进入自愈。
+    const timeout = new Promise<never>((_, reject) => {
+      timeoutId = window.setTimeout(
+        () => reject(new Error("取流超时，正在自动重试")),
+        STREAM_INFO_TIMEOUT_MS,
+      );
+    });
+    void Promise.race([
+      api.getStreamInfo(room.platform, room.roomId, room.lineId),
+      timeout,
+    ])
       .then((next) => {
         if (!cancelled) {
           setInfo(next);
@@ -329,10 +354,21 @@ export function RoomTile({
       })
       .catch((error: unknown) => {
         if (cancelled) return;
-        setInfoError(error instanceof Error ? error.message : "直播信息加载失败");
+        const message = error instanceof Error ? error.message : "直播信息加载失败";
+        setInfoError(message);
+        reportLiveEvent("stream.info.error", room.platform, room.roomId, message);
+        // 房间不存在等致命错误不重试；风控是临时状态，走长退避自愈。
+        if (shouldAutoRecover(message)) {
+          recoverRef.current("取流失败");
+        }
+      })
+      .finally(() => {
+        if (timeoutId != null) window.clearTimeout(timeoutId);
       });
+
     return () => {
       cancelled = true;
+      if (timeoutId != null) window.clearTimeout(timeoutId);
     };
   }, [retryKey, room.lineId, room.platform, room.roomId]);
 
@@ -523,11 +559,21 @@ export function RoomTile({
     event.currentTarget.setPointerCapture(event.pointerId);
   };
 
-  /* 手动切换清晰度 / 线路 = 新的开始：清掉之前的连续失败计数，
-   * 不让上一个档位的失败次数累加到新档位上。 */
-  useEffect(() => {
+  /** 清空失败计数并撤销尚未触发的退避定时器。 */
+  const resetRecovery = useCallback(() => {
     reconnectAttemptRef.current = 0;
-  }, [room.qualityId, room.lineId]);
+    lastRecoverAtRef.current = 0;
+    if (backoffTimerRef.current != null) {
+      window.clearTimeout(backoffTimerRef.current);
+      backoffTimerRef.current = null;
+    }
+  }, []);
+
+  /* 手动切换清晰度 / 线路、播放成功、组件卸载 = 新的开始。 */
+  useEffect(() => {
+    resetRecovery();
+  }, [room.qualityId, room.lineId, resetRecovery]);
+  useEffect(() => () => resetRecovery(), [resetRecovery]);
 
   /* 错误回调里读最新的档位信息（effect 只按 errorNonce/state 重跑，
    * 与 useXgPlayer 的重建节奏保持一致，避免切档位时误计一次失败）。 */
@@ -562,48 +608,73 @@ export function RoomTile({
     return true;
   };
 
-  /* 异常自愈：直播流异常（出错 / 持续缓冲）时**直接重新拉取直播间**
-   *（重新取流 + 重建播放器，不再退避等待）；连续刷新超过 2 次仍异常，
-   * 再切换线路刷新（坏线路对着同一地址重试无意义）。换线 / 回退清晰度后
-   * 计数清零。仅当已无线路/档位可换时才退避刷新，避免对永久失效的流疯狂打上游。 */
-  const recoverRef = useRef<() => void>(() => {});
-  recoverRef.current = () => {
+  /* 异常自愈统一入口。错误 / 持续缓冲 / 取流失败都走这里：
+   *   前两次立即重新取流；再失败依次换线、回退清晰度；都不可用时
+   *   2s→4s→8s→16s→30s 退避。
+   *
+   * 每次自愈都显式 bump retryKey —— 不能依赖"URL 可能变了"：若回退后的
+   * 自动档恰好等于原档位，URL 不变会让 useXgPlayer 不重建，播放器永远停在 error。 */
+  recoverRef.current = (reason: string) => {
+    const now = Date.now();
+    // 播放器 error 与看门狗可能在同一次故障里先后触发，短时间内只处理一次。
+    // 取流失败是独立的链路（播放器此时已销毁），不能被前一次恢复节流挡掉，
+    // 否则一次"播放出错 → 重新取流也失败"会永久停摆。
+    if (reason !== "取流失败" && now - lastRecoverAtRef.current < RECOVER_THROTTLE_MS) return;
+    lastRecoverAtRef.current = now;
+    if (backoffTimerRef.current != null) {
+      window.clearTimeout(backoffTimerRef.current);
+      backoffTimerRef.current = null;
+    }
+
     reconnectAttemptRef.current += 1;
-    if (reconnectAttemptRef.current > 2) {
-      // 刷新 >2 次：换一条没试过的线路再刷新（换线本身会触发重新取流）。
-      if (switchToNextLineRef.current()) {
-        reconnectAttemptRef.current = 0;
-        return;
-      }
-      // 没有可换的线路：手动选过清晰度时回退自动档（坏档位重试无意义）。
-      const fallback = qualityFallbackRef.current;
-      if (fallback.qualityId) {
-        reconnectAttemptRef.current = 0;
-        fallback.onQualityChange(room.key, "");
-        toast(
-          `${fallback.nickname || `房间 ${room.roomId}`}：所选清晰度暂不可用，已切回默认清晰度`,
-          "info",
-        );
-        return;
-      }
-      // 已无线路/档位可换：退避刷新（2s→4s→…→30s），避免疯狂打上游。
-      const delay = Math.min(30_000, 2_000 * 2 ** Math.min(reconnectAttemptRef.current - 3, 4));
-      window.setTimeout(() => setRetryKey((key) => key + 1), delay);
+    const attempt = reconnectAttemptRef.current;
+    const refresh = () => setRetryKey((key) => key + 1);
+
+    if (attempt <= 2) {
+      console.info(`[recover] ${reason}：立即重新取流（${attempt}/2）`);
+      reportLiveEvent("recover", room.platform, room.roomId, `${reason} attempt=${attempt} action=retry-now`);
+      refresh();
       return;
     }
-    // 异常直接重新拉取直播间。
-    setRetryKey((key) => key + 1);
+    // 刷新 >2 次：换一条没试过的线路。
+    if (switchToNextLineRef.current()) {
+      resetRecovery();
+      reportLiveEvent("recover", room.platform, room.roomId, `${reason} attempt=${attempt} action=switch-line`);
+      refresh();
+      return;
+    }
+    // 没有可换的线路：手动选过清晰度时回退自动档。
+    const fallback = qualityFallbackRef.current;
+    if (fallback.qualityId) {
+      resetRecovery();
+      reportLiveEvent("recover", room.platform, room.roomId, `${reason} attempt=${attempt} action=fallback-quality`);
+      fallback.onQualityChange(room.key, "");
+      refresh();
+      toast(
+        `${fallback.nickname || `房间 ${room.roomId}`}：所选清晰度暂不可用，已切回默认清晰度`,
+        "info",
+      );
+      return;
+    }
+    // 已无线路/档位可换：退避刷新，避免对永久失效的流疯狂打上游。
+    const delay = recoveryDelay(attempt);
+    console.info(`[recover] ${reason}：${delay / 1000}s 后重试`);
+    reportLiveEvent("recover", room.platform, room.roomId, `${reason} attempt=${attempt} action=backoff delayMs=${delay}`);
+    backoffTimerRef.current = window.setTimeout(() => {
+      backoffTimerRef.current = null;
+      refresh();
+    }, delay);
   };
 
   useEffect(() => {
     if (player.state === "playing") {
-      reconnectAttemptRef.current = 0;
+      resetRecovery();
       return;
     }
     if (player.state !== "error") return;
-    // 异常直接重新拉取直播间（立即触发，不退避等待）。
-    recoverRef.current();
-  }, [player.errorNonce, player.state]);
+    reportLiveEvent("player.error", room.platform, room.roomId, player.error ?? "播放器错误");
+    recoverRef.current("播放器断开");
+  }, [player.errorNonce, player.state, resetRecovery, room.platform, room.roomId, player.error]);
 
   /* ---------------------------------------------------- 线路自愈（卡住换线）
    * 实测：虎牙 TX CDN 会给特定房间返回损坏的 FLV（头声明纯视频却混着音频
@@ -620,7 +691,7 @@ export function RoomTile({
     };
     if (player.state === "playing") {
       stallTriedRef.current = new Set();
-      reconnectAttemptRef.current = 0;
+      resetRecovery();
       clear();
       return;
     }
@@ -640,10 +711,32 @@ export function RoomTile({
     stallWatchdogRef.current = window.setTimeout(() => {
       stallWatchdogRef.current = null;
       // 与出错走同一套自愈：先刷新，刷新 >2 次再换线。
-      recoverRef.current();
+      recoverRef.current("播放卡住");
     }, delay);
     return clear;
-  }, [player.state, info?.isLive, info?.isLoop]);
+  }, [player.state, info?.isLive, info?.isLoop, resetRecovery]);
+
+  /* 已确认为离线 / 无可用档位时每 30s 探测一次。
+   * 旧播放页的"30 秒自动刷新"在多房间重构中丢失，曾导致一次瞬时 offline
+   * 就让卡片永久停在空态；取流失败（infoError）由自愈退避负责，不叠加轮询。 */
+  useEffect(() => {
+    if (!info || infoError) return;
+    if (info.isLive && variant) return;
+    const timer = window.setInterval(() => setRetryKey((key) => key + 1), OFFLINE_REFRESH_MS);
+    return () => window.clearInterval(timer);
+  }, [info, infoError, variant]);
+
+  /* 登录态变化后重新取流：B 站 403 / 斗鱼高低档切换都依赖登录 Cookie。 */
+  useEffect(() => {
+    if (room.platform !== "douyu" && room.platform !== "bilibili") return;
+    const refresh = () => setRetryKey((key) => key + 1);
+    window.addEventListener(BILIBILI_AUTH_EVENT, refresh);
+    window.addEventListener(DOUYU_AUTH_EVENT, refresh);
+    return () => {
+      window.removeEventListener(BILIBILI_AUTH_EVENT, refresh);
+      window.removeEventListener(DOUYU_AUTH_EVENT, refresh);
+    };
+  }, [room.platform]);
 
   /* 轮播稿件自然播完：重新取流拿下一条。 */
   useEffect(() => {

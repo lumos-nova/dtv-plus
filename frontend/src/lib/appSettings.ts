@@ -22,6 +22,8 @@ export interface AppSettings {
   liveNotifyEnabled: boolean;
   /** 直播中优先：关注列表把直播中的主播排在最前（关闭时按用户手动排序） */
   livePriorityEnabled: boolean;
+  /** 直播流日志：单独写入日志目录下的 live/ 子目录 */
+  liveLogEnabled: boolean;
 }
 
 const KEY = "dtv_app_settings_v1";
@@ -47,6 +49,7 @@ export function loadAppSettings(): AppSettings {
       typeof raw?.liveNotifyEnabled === "boolean" ? raw.liveNotifyEnabled : true,
     livePriorityEnabled:
       typeof raw?.livePriorityEnabled === "boolean" ? raw.livePriorityEnabled : true,
+    liveLogEnabled: typeof raw?.liveLogEnabled === "boolean" ? raw.liveLogEnabled : true,
   };
 }
 
@@ -62,5 +65,6 @@ export function saveAppSettings(settings: AppSettings) {
     watchedSeconds: settings.watchedSeconds,
     liveNotifyEnabled: settings.liveNotifyEnabled,
     livePriorityEnabled: settings.livePriorityEnabled,
+    liveLogEnabled: settings.liveLogEnabled,
   });
 }

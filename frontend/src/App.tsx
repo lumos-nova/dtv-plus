@@ -1,7 +1,10 @@
 import { useEffect } from "react";
 import { HashRouter, useLocation } from "react-router-dom";
+import * as LiveLog from "../bindings/dtv/internal/services/livelogservice";
 import { ErrorBoundary } from "./components/common/ErrorBoundary";
+import { loadAppSettings, saveAppSettings } from "./lib/appSettings";
 import { dismissSplash } from "./lib/splash";
+import { isWailsRuntime } from "./lib/window";
 import { AppRoutes } from "./routes";
 import { BilibiliAuthProvider } from "./state/BilibiliAuthProvider";
 import { DouyuAuthProvider } from "./state/DouyuAuthProvider";
@@ -16,9 +19,9 @@ import { ToastProvider } from "./state/ToastProvider";
  * 路由使用 HashRouter：Wails 的 AssetFileServerFS 没有 SPA fallback，
  * 在 /player 上按 F5 会 404；hash 路由在桌面端最稳（U-16）。
  *
- * Provider 顺序与旧项目一致（Theme → Follow → PlayerUi → Subscription），
- * 但因为每个 Provider 的 value 都做了 useMemo，且状态彼此独立，
- * 不再出现旧版"改主题导致整个 Navbar 重渲染"的连锁更新。
+ * Provider 顺序：Theme → Toast → Follow → 登录态 → PlayerUi。
+ * 每个 Provider 的 value 都做了 useMemo，且状态彼此独立，
+ * 不会出现"改主题导致整个 Navbar 重渲染"的连锁更新。
  */
 export function App() {
   useEffect(() => {
@@ -37,6 +40,19 @@ export function App() {
       window.removeEventListener("error", onError);
       window.removeEventListener("unhandledrejection", onRejection);
     };
+  }, []);
+
+  // 直播流日志开关由 Go 侧持久化；启动时同步到前端设置，避免两边显示不一致。
+  useEffect(() => {
+    if (!isWailsRuntime()) return;
+    void LiveLog.Enabled()
+      .then((enabled) => {
+        const current = loadAppSettings();
+        if (current.liveLogEnabled !== enabled) {
+          saveAppSettings({ ...current, liveLogEnabled: enabled });
+        }
+      })
+      .catch(() => undefined);
   }, []);
 
   return (

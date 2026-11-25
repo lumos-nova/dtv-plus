@@ -24,8 +24,8 @@ if (desktopOS) {
   document.documentElement.dataset.os = desktopOS;
 }
 
-// 启动落地页：有订阅分区先进「订阅」，没有则保持斗鱼首页 `/`。
-// 必须在 HashRouter 挂载前改 hash，避免先渲染一帧斗鱼首页再跳转。
+// 启动落地页：无 hash / 仅 `#` 时补成 `#/`（斗鱼首页）。
+// 必须在 HashRouter 挂载前改 hash，深链接（如 `#/monitor`）不覆盖。
 applyStartupLanding();
 // 双击标题栏最大化 / 还原。Wails v3 在 Windows 上不接管拖拽区的双击，
 // 由这里统一补一条（见 lib/window.ts 的 installTitlebarDoubleClick）。

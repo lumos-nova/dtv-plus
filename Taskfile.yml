@@ -16,6 +16,11 @@ includes:
   darwin: ./build/darwin/Taskfile.yml
 
 tasks:
+  check:versions:
+    summary: 校验所有发布版本号与 build/config.yml 的 info.version 一致
+    cmds:
+      - node ./scripts/check-versions.mjs
+
   build:
     summary: Builds the application
     cmds:

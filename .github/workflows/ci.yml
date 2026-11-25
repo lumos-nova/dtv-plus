@@ -1,0 +1,86 @@
+name: CI
+
+# 质量门禁：每次 push / PR 都跑本地已经验证过的四项检查。
+# 发布打包仍由 windows.yml / macos.yml 负责，本工作流不产安装包。
+#
+#   - Go 单元测试        go test ./...
+#   - 版本号一致性        node scripts/check-versions.mjs
+#   - TypeScript 类型检查 pnpm typecheck
+#   - ESLint             pnpm lint
+#   - Vitest             pnpm test
+#
+# frontend/bindings 被 .gitignore 忽略，类型检查前需要用 Wails CLI 生成一次。
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  checks:
+    name: Test & lint
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.26.x"
+          cache-dependency-path: go.sum
+
+      - name: Download Go modules
+        run: go mod download
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+
+      - name: Install Wails3 CLI
+        run: |
+          go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: pnpm install --frozen-lockfile
+
+      - name: Check version consistency
+        run: node scripts/check-versions.mjs
+
+      - name: Go test
+        run: go test ./...
+
+      - name: Generate Wails bindings
+        run: wails3 generate bindings -clean=true -ts -i
+
+      - name: TypeScript typecheck
+        working-directory: frontend
+        run: pnpm typecheck
+
+      - name: ESLint
+        working-directory: frontend
+        run: pnpm lint
+
+      - name: Vitest
+        working-directory: frontend
+        run: pnpm test

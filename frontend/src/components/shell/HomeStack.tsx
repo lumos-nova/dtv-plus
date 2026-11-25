@@ -3,7 +3,7 @@ import { useLocation } from "react-router-dom";
 import type { LivePlatform } from "@/api";
 import { HomeScreen } from "@/screens/HomeScreen";
 
-/** 当前路径对应的平台首页；播放页 / 订阅页返回 null。 */
+/** 当前路径对应的平台首页；工作台等非首页路由返回 null。 */
 export function homePlatformFromPath(pathname: string): LivePlatform | null {
   if (pathname === "/" || pathname === "") return "douyu";
   if (pathname.startsWith("/huya")) return "huya";

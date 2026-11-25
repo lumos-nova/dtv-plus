@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"strings"
+	"time"
 
 	"dtv/internal/platforms/common"
 	"dtv/internal/platforms/douyin"
@@ -74,13 +75,15 @@ func (s *DouyinService) FetchRoomInfo(roomID string) (common.Streamer, error) {
 }
 
 // GetStreamInfo 播放页主入口：房间信息 + 全部清晰度。
-func (s *DouyinService) GetStreamInfo(roomID string, line string) (*common.StreamInfo, error) {
+func (s *DouyinService) GetStreamInfo(roomID string, line string) (info *common.StreamInfo, err error) {
 	roomID = strings.TrimSpace(roomID)
+	started := time.Now()
+	defer func() { logLiveFetch("douyin", roomID, line, started, info, err) }()
 	if roomID == "" {
 		return nil, fmt.Errorf("缺少房间号")
 	}
 
-	info, err := s.client.StreamInfo(roomID, strings.TrimSpace(line))
+	info, err = s.client.StreamInfo(roomID, strings.TrimSpace(line))
 	if err != nil {
 		log.Printf("[DouyinService] 取流信息失败 room=%s: %v", roomID, err)
 		return nil, err

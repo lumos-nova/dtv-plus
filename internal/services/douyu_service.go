@@ -12,6 +12,7 @@ import (
 	"log"
 	"log/slog"
 	"strings"
+	"time"
 
 	"dtv/internal/platforms/common"
 	"dtv/internal/platforms/douyu"
@@ -141,12 +142,14 @@ func (s *DouyuService) SearchAnchor(keyword string) ([]common.SearchHit, error) 
 // GetStreamInfo 播放页主入口：房间信息 + 所有清晰度 + 所有线路。
 //
 // line 为空时用斗鱼默认线路；切换线路/清晰度时前端重新调用本方法即可。
-func (s *DouyuService) GetStreamInfo(roomID string, line string) (*common.StreamInfo, error) {
+func (s *DouyuService) GetStreamInfo(roomID string, line string) (info *common.StreamInfo, err error) {
 	roomID = strings.TrimSpace(roomID)
+	started := time.Now()
+	defer func() { logLiveFetch("douyu", roomID, line, started, info, err) }()
 	if roomID == "" {
 		return nil, fmt.Errorf("缺少房间号")
 	}
-	info, err := s.client.StreamInfo(roomID, strings.TrimSpace(line))
+	info, err = s.client.StreamInfo(roomID, strings.TrimSpace(line))
 	if err != nil {
 		log.Printf("[DouyuService] 取流信息失败 room=%s line=%s: %v", roomID, line, err)
 		slog.Warn("斗鱼取流信息失败", "room", roomID, "line", line, "error", err)

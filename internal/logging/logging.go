@@ -16,11 +16,12 @@ import (
 const maxLogBytes = 10 << 20 // 单文件 10MB，超出后滚动到 .1
 
 type rotatingWriter struct {
-	mu   sync.Mutex
-	dir  string
-	day  string
-	file *os.File
-	size int64
+	mu     sync.Mutex
+	dir    string
+	prefix string
+	day    string
+	file   *os.File
+	size   int64
 }
 
 type switchingWriter struct {
@@ -32,7 +33,14 @@ var setupMu sync.Mutex
 var activeWriter *switchingWriter
 
 func newRotatingWriter(dir string) (*rotatingWriter, error) {
-	w := &rotatingWriter{dir: dir}
+	return newRotatingWriterWithPrefix(dir, "dtv-")
+}
+
+func newRotatingWriterWithPrefix(dir, prefix string) (*rotatingWriter, error) {
+	if prefix == "" {
+		prefix = "dtv-"
+	}
+	w := &rotatingWriter{dir: dir, prefix: prefix}
 	if err := w.open(); err != nil {
 		return nil, err
 	}
@@ -77,7 +85,7 @@ func (w *switchingWriter) Close() error {
 
 func (w *rotatingWriter) open() error {
 	w.day = time.Now().Format("20060102")
-	path := filepath.Join(w.dir, "dtv-"+w.day+".log")
+	path := filepath.Join(w.dir, w.prefix+w.day+".log")
 	file, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
 	if err != nil {
 		return err
@@ -142,6 +150,9 @@ func (b bestEffortWriter) Write(p []byte) (int, error) {
 // Setup 初始化全局 logger：文件 + stderr（便于 `wails3 dev` 时观察）。
 // 返回的函数用于在退出时关闭文件。
 func Setup() func() {
+	// 直播流日志独立写入 <logsDir>/live/，与主日志分开轮转。
+	closeLive := setupLive()
+
 	dir := appdirs.Ensure(appdirs.LogsDir())
 	writer, err := newRotatingWriter(dir)
 	if err != nil {
@@ -152,6 +163,7 @@ func Setup() func() {
 		setupMu.Unlock()
 		slog.SetDefault(slog.New(slog.NewTextHandler(io.MultiWriter(bestEffortWriter{os.Stderr}, route), nil)))
 		return func() {
+			closeLive()
 			setupMu.Lock()
 			if activeWriter == route {
 				activeWriter = nil
@@ -171,6 +183,7 @@ func Setup() func() {
 	slog.Info("日志已启用", "dir", dir)
 
 	return func() {
+		closeLive()
 		setupMu.Lock()
 		if activeWriter == route {
 			activeWriter = nil
@@ -201,6 +214,10 @@ func SetDirectory(dir string) error {
 	setupMu.Unlock()
 	if previous != nil {
 		_ = previous.Close()
+	}
+	// 直播流日志跟随日志目录一起迁移，仍放在其 live/ 子目录。
+	if err := setLiveDirectory(dir); err != nil {
+		slog.Warn("直播流日志目录切换失败", "dir", dir, "error", err)
 	}
 	slog.Info("日志目录已更改", "dir", dir)
 	return nil

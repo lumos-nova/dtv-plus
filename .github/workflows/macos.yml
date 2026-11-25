@@ -89,8 +89,11 @@ jobs:
       - name: Sync Info.plist version
         run: |
           set -euo pipefail
-          VERSION=$(sed -n 's/^[[:space:]]*version:[[:space:]]*"\([^"]*\)".*/\1/p' build/config.yml | head -n 1)
-          VERSION=${VERSION:-4.0.0}
+          VERSION=$(sed -n '/^info:/,$ s/^[[:space:]]*version:[[:space:]]*"\([^"]*\)".*/\1/p' build/config.yml | head -n 1)
+          if [ -z "$VERSION" ]; then
+            echo "::error::info.version not found in build/config.yml"
+            exit 1
+          fi
           for plist in build/darwin/Info.plist build/darwin/Info.dev.plist; do
             /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $VERSION" "$plist"
             /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $VERSION" "$plist"
@@ -188,8 +191,11 @@ jobs:
             xcrun stapler validate "$DMG"
           fi
 
-          VERSION=$(sed -n 's/^[[:space:]]*version:[[:space:]]*"\([^"]*\)".*/\1/p' build/config.yml | head -n 1)
-          VERSION=${VERSION:-4.0.0}
+          VERSION=$(sed -n '/^info:/,$ s/^[[:space:]]*version:[[:space:]]*"\([^"]*\)".*/\1/p' build/config.yml | head -n 1)
+          if [ -z "$VERSION" ]; then
+            echo "::error::info.version not found in build/config.yml"
+            exit 1
+          fi
           mkdir -p artifacts
           mv "$DMG" "artifacts/DTV-${VERSION}-${{ matrix.arch }}.dmg"
 

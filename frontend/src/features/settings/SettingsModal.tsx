@@ -1,5 +1,6 @@
 import { ArrowDownUp, BellRing, FolderOpen, HardDrive, Save } from "lucide-react";
 import { useEffect, useState } from "react";
+import * as LiveLog from "../../../bindings/dtv/internal/services/livelogservice";
 import * as StorageSettings from "../../../bindings/dtv/internal/services/storagesettingsservice";
 import type { StorageDirs } from "../../../bindings/dtv/internal/appdirs/models";
 import { BilibiliLoginButton } from "@/features/bilibili/BilibiliLoginButton";
@@ -17,6 +18,7 @@ export function SettingsModal({ onClose }: { onClose: () => void }) {
   const [storageBusy, setStorageBusy] = useState(false);
   const [storageMessage, setStorageMessage] = useState("");
   const [storageModalOpen, setStorageModalOpen] = useState(false);
+  const [liveLogDir, setLiveLogDir] = useState("");
 
   useEffect(() => {
     saveAppSettings({ ...settings, watchedSeconds: loadAppSettings().watchedSeconds });
@@ -25,6 +27,11 @@ export function SettingsModal({ onClose }: { onClose: () => void }) {
   useEffect(() => {
     if (!isWailsRuntime()) return;
     let active = true;
+    void LiveLog.LogDirectory()
+      .then((dir) => {
+        if (active) setLiveLogDir(dir);
+      })
+      .catch(() => undefined);
     void StorageSettings.GetPaths()
       .then((paths) => {
         if (active) setStoragePaths(paths);
@@ -60,6 +67,9 @@ export function SettingsModal({ onClose }: { onClose: () => void }) {
       window.dispatchEvent(
         new CustomEvent("dtv:live-priority", { detail: { enabled: next.livePriorityEnabled } }),
       );
+    }
+    if (typeof next.liveLogEnabled === "boolean" && isWailsRuntime()) {
+      void LiveLog.SetEnabled(next.liveLogEnabled).catch(() => undefined);
     }
   };
 
@@ -165,6 +175,22 @@ export function SettingsModal({ onClose }: { onClose: () => void }) {
           <p className={styles.hint}>
             <ArrowDownUp size={14} />
             开启后直播中的主播排在最前（轮播其次、未开播最后）；关闭后可拖拽任意排序
+          </p>
+        </section>
+
+        <section className={styles.section}>
+          <h3>直播流日志</h3>
+          <label className={styles.reminderToggle}>
+            <span>记录直播流与重连日志</span>
+            <input
+              type="checkbox"
+              checked={settings.liveLogEnabled}
+              onChange={(event) => patch({ liveLogEnabled: event.target.checked })}
+            />
+          </label>
+          <p className={styles.hint}>
+            <FolderOpen size={14} />
+            单独写入「{liveLogDir || "日志目录/live"}」，记录取流、续流与断流自愈，便于排查播放问题。
           </p>
         </section>
 

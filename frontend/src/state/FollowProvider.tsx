@@ -8,7 +8,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { api, type LivePlatform, type Streamer } from "@/api";
+import { api, getStreamInfoRaw, type LivePlatform, type Streamer } from "@/api";
 import { notifyApi, notifyEngineAvailable, type StatusPatch } from "@/api/notify";
 import { loadAppSettings } from "@/lib/appSettings";
 import { loadJSON, saveJSON, STORAGE_KEYS } from "@/lib/storage";
@@ -827,7 +827,7 @@ export function FollowProvider({ children }: { children: ReactNode }) {
               // 轻量房间信息失败时退回取流信息接口再试一次（老项目也是逐个平台取详情）
               try {
                 const stream = await withTimeout(
-                  api.getStreamInfo(record.platform, record.id),
+                  getStreamInfoRaw(record.platform, record.id),
                   20_000,
                   `${record.platform}:${record.id}`,
                 );

@@ -25,7 +25,16 @@ if (-not $Version) {
     $Version = $info.fixed.file_version
 }
 if (-not $Version) {
-    $Version = "4.1.0"
+    # 兜底从唯一来源 build/config.yml 读取，避免再出现一处硬编码版本号。
+    $configPath = Join-Path $projectRoot "build\config.yml"
+    $config = Get-Content -LiteralPath $configPath -Raw -Encoding UTF8
+    $match = [regex]::Match($config, '(?ms)^info:\s*.*?^[ \t]+version:\s*["'']?([^"''\r\n#]+)["'']?')
+    if ($match.Success) {
+        $Version = $match.Groups[1].Value.Trim()
+    }
+}
+if (-not $Version) {
+    throw "Version not found in build/config.yml or build/windows/info.json"
 }
 
 if (-not $WixBin) {

@@ -245,6 +245,8 @@ func main() {
 	// 配置文件导入 / 导出：只负责系统文件对话框与磁盘读写。
 	app.RegisterService(application.NewService(services.NewDataTransferService()))
 	app.RegisterService(application.NewService(services.NewStorageSettingsService(imageProxyService)))
+	// 直播流日志：独立写入日志目录下的 live/ 子目录，开关在全局设置里。
+	app.RegisterService(application.NewService(services.NewLiveLogService()))
 
 	mainWindow = app.Window.NewWithOptions(application.WebviewWindowOptions{
 		Title: "DTV",

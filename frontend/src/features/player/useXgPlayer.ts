@@ -308,10 +308,22 @@ export function useXgPlayer(
 
       const media = player.media as HTMLVideoElement | null;
       setMediaElement(media);
-      if (media && isVOD) {
-        // 轮播稿件自然播完：通知外层重新取流（房间会轮到下一条稿件）
+      if (media) {
         const onEnded = () => {
-          if (!disposed) setEndedNonce((n) => n + 1);
+          if (disposed) return;
+          if (isVOD) {
+            // 轮播稿件自然播完：通知外层重新取流（房间会轮到下一条稿件）
+            setEndedNonce((n) => n + 1);
+            return;
+          }
+          if (isLive) {
+            // 直播流被 MSE 正常结束（CDN 300s 到期 / 中继 EOF）时，xgplayer
+            // 不一定发 error。当作断流转给外层自愈，否则会停在 paused，
+            // 而 paused 既不触发错误恢复也不进缓冲看门狗。
+            setError("直播流已断开，正在尝试自动重连。");
+            setState("error");
+            setErrorNonce((n) => n + 1);
+          }
         };
         media.addEventListener("ended", onEnded);
         detachEnded = () => media.removeEventListener("ended", onEnded);

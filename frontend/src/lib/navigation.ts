@@ -8,13 +8,10 @@ export function platformHomePath(platform: LivePlatform): string {
 }
 
 /**
- * 启动时的默认落地页：
- *   - 有订阅分区 → 订阅 Tab；
- *   - 没有订阅 → 斗鱼首页。
+ * 启动时的默认落地页：把空 hash / `#` 补成 `#/`（斗鱼首页）。
  *
- * 只在应用从根路径启动时生效（此时 hash 为空 / `#/`）。用户手动打开
- * `#/huya`、`#/monitor` 这类深链接时不覆盖。必须在 React/HashRouter
- * 挂载之前调用（main.tsx），否则会先闪一下斗鱼首页再跳转。
+ * 只在应用从根路径启动时生效。用户手动打开 `#/huya`、`#/monitor`
+ * 这类深链接时不覆盖。必须在 React/HashRouter 挂载之前调用（main.tsx）。
  */
 export function applyStartupLanding(): void {
   if (typeof window === "undefined") return;

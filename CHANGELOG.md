@@ -1,6 +1,22 @@
 # Changelog
 
+> 当前版本 **1.0.7**（版本号唯一来源：`build/config.yml` 的 `info.version`）。
+> `4.1.0` 一节记录的是上游 DTV 的移植基线；dtv-plus 自此按 1.0.x 独立编号。
+
 ## Unreleased
+
+### 修复（直播链路）
+
+- **断流后不再自动重连**：`RoomTile` 的取流失败现在进入统一自愈（房间不存在等
+  致命错误除外），未开播 / 无档位时每 30 秒重新探测；换线与清晰度回退分支显式
+  递增 nonce 强制重建播放器；退避定时器纳入 ref 并在播放成功 / 卸载时清理。
+  新增 `recovery.test.ts` 锁定 2/4/8/16/30s 退避序列。
+- **取流 IPC 无超时**：前端 15 秒超时后直接自愈，不再无限等待 Wails 调用。
+- **斗鱼 300 秒直链到期停播**：接入此前无人调用的本地流中继（`prepareStreamRelay`），
+  在到期前预取续流；中继不可用时自动回退 CDN 直连。
+- **直播流正常结束（FLV EOF）不被识别**：`ended` 事件在直播模式下按断流处理；
+  B 站 / 斗鱼登录态变化事件现在会触发重新取流。
+- 清理未被引用的 `PlayerCaptionButtons` 组件及样式（订阅分区死代码已于前次清理）。
 
 ### 修复
 
@@ -119,6 +135,13 @@
   `0 2px 6px rgba(0,0,0,.7)` 的阴影，密集弹幕叠在画面上时不再发灰。
 
 ### 新增
+
+- **直播流日志**：日志目录下独立建立 `live/` 子目录（`live-YYYYMMDD.log`，按天 /
+  10MB 轮转），记录四平台取流耗时与错误、斗鱼中继会话 / 续流 / 连接关闭，
+  以及前端播放器断流与自愈决策。全局设置新增「直播流日志」开关（默认开启，
+  关闭后不再写入），修改日志目录时直播流日志自动跟随迁移。
+- 新增 `LiveLogService`（`SetEnabled` / `Enabled` / `LogDirectory` / `Report`）
+  与前端 `lib/liveLog.ts` 上报入口；补 live 日志开关 / 目录切换单测。
 
 - **六套主题配色，同色系日夜成对**：顶栏「主题配色」面板改成 2 列 3 行：
   青柠·夜 / 青柠·日、黑白灰·夜 / 黑白灰·日、琥珀·夜 / 书页·日。
@@ -314,6 +337,19 @@
   **去掉配对码**：Go 端令牌固定为 `dtv`（可用 `DTV_LAN_SYNC_TOKEN` 覆盖）并随
   UDP 广播下发，接收端无需任何输入即可导入。
 
+### 工程改动
+
+- 清理订阅分区遗留的死代码（Provider / 页面 / keep-alive 容器 / 分区栏 CSS）与过时注释；
+  数据同步仍兼容旧订阅键，`/subscribe` `/custom` 旧书签重定向保留。
+- 版本号统一为 **1.0.7**，唯一来源为 `build/config.yml` 的 `info.version`；
+  新增 `scripts/check-versions.mjs`，校验前端包、Windows PE 资源、macOS plist
+  与 CHANGELOG 顶部说明的一致性。
+- 新增 CI 工作流：Go test、版本号校验、Wails bindings 生成、TypeScript 类型检查、
+  ESLint 与 Vitest（发布打包仍由 windows.yml / macos.yml 负责）。
+- 录制 / 精彩片段导出改为本地 loopback 流式上传：一次性 token、临时文件 + 原子
+  rename、256MiB 上限与失败清理；移除整份文件走 base64 IPC 的路径，降低大文件
+  导出时的内存峰值。
+
 ## 4.1.0 — 2026-11-01
 
 本次是 4.0 移植完成后的优化轮，对应 `docs/IMPROVEMENT_REVIEW.md`。
@@ -384,9 +420,15 @@
 - 新增 GitHub Actions：Go 测试 + typecheck + lint + Vitest + 前端构建。
 - 新增 `docs/ARCHITECTURE.md`、`docs/SHORTCUTS.md`，更新 README。
 
-### 尚未实现（保留在路线图）
+### 尚未实现（截至 1.0.7，保留在路线图）
 
-- 设置页、最近观看、开播通知、弹幕发送/屏蔽词 UI。
-- 画中画 / 迷你播放器 / 多窗口拼屏。
-- B 站 Cookie 迁移到 Go 侧安全存储。
+- 斗鱼文本弹幕发送（协议与频率限制待确认）。
+- 登录凭据安全存储：Windows DPAPI / macOS Keychain / Linux Secret Service；
+  当前各平台 Cookie 仍由前端 localStorage 保存。
+- 虎牙 / 抖音扫码登录；抖音关键词搜索（当前仅支持房间号）。
 - 托盘菜单与“关闭到托盘”。
+- 画中画 / 迷你播放器 / 多窗口拼屏。
+- 最近观看。
+
+已在此前版本落地、不再列为待办：设置页、开播提醒、弹幕关键词屏蔽 UI、
+多房间工作台（16 路网格 / 拖拽 / 独立录制 / 120 秒回溯）、全局音量与休息提醒。

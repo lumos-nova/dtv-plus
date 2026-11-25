@@ -36,10 +36,17 @@ func TestSetupLogsToFileWhenStderrInvalid(t *testing.T) {
 	if err != nil {
 		t.Fatalf("reading log directory: %v", err)
 	}
-	if len(entries) == 0 {
+	var logFileName string
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			logFileName = entry.Name()
+			break
+		}
+	}
+	if logFileName == "" {
 		t.Fatal("no log file created")
 	}
-	data, err := os.ReadFile(filepath.Join(root, "local", "DTV", "logs", entries[0].Name()))
+	data, err := os.ReadFile(filepath.Join(root, "local", "DTV", "logs", logFileName))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -69,10 +76,17 @@ func TestSetDirectorySwitchesLogWriter(t *testing.T) {
 	if err != nil {
 		t.Fatalf("reading selected log directory: %v", err)
 	}
-	if len(entries) != 1 {
-		t.Fatalf("selected log directory contains %d files, want one", len(entries))
+	// live/ 是直播流日志的子目录，不算主日志文件。
+	var logFiles []string
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			logFiles = append(logFiles, entry.Name())
+		}
 	}
-	data, err := os.ReadFile(filepath.Join(selected, entries[0].Name()))
+	if len(logFiles) != 1 {
+		t.Fatalf("selected log directory contains %d files, want one: %v", len(logFiles), logFiles)
+	}
+	data, err := os.ReadFile(filepath.Join(selected, logFiles[0]))
 	if err != nil {
 		t.Fatal(err)
 	}

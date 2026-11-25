@@ -2,7 +2,6 @@
 package services
 
 import (
-	"encoding/base64"
 	"fmt"
 	"os"
 	"os/exec"
@@ -28,11 +27,18 @@ type DataTransferFile struct {
 // 只负责系统文件对话框和磁盘读写，配置内容的序列化与合并逻辑都在前端
 // （frontend/src/lib/configTransfer.ts），这样可以和局域网同步共用一套
 // 增量合并规则。
-type DataTransferService struct{}
+type DataTransferService struct {
+	exporter *ExportService
+}
 
 // NewDataTransferService 创建配置文件传输服务。
 func NewDataTransferService() *DataTransferService {
-	return &DataTransferService{}
+	return &DataTransferService{exporter: NewExportService()}
+}
+
+// ServiceShutdown 关闭本地导出服务并清理未完成的临时文件。
+func (s *DataTransferService) ServiceShutdown() error {
+	return s.exporter.Close()
 }
 
 // PickImportJSONFile 打开系统文件选择框并读取选中的 JSON 文件。
@@ -117,20 +123,11 @@ func (s *DataTransferService) SaveExportJSONFile(content string, suggestedName s
 	}, nil
 }
 
-// SaveRecordingFile prompts for a destination and writes a WebM, MP4, or GIF recording.
-func (s *DataTransferService) SaveRecordingFile(encodedContent string, suggestedName string) (*DataTransferFile, error) {
-	const maxRecordingBytes = 256 << 20
-	if len(encodedContent) > base64.StdEncoding.EncodedLen(maxRecordingBytes) {
-		return nil, fmt.Errorf("录制文件超过 256 MiB 限制")
-	}
-	content, err := base64.StdEncoding.DecodeString(encodedContent)
-	if err != nil {
-		return nil, fmt.Errorf("解码录制文件失败：%w", err)
-	}
-	if len(content) == 0 || len(content) > maxRecordingBytes {
-		return nil, fmt.Errorf("录制文件为空或超过 256 MiB 限制")
-	}
-
+// PrepareRecordingExport 打开保存对话框，确定录制文件的落盘路径。
+//
+// 用户取消时返回 (nil, nil)。前端拿到会话后用流式 HTTP 上传文件内容，
+// 不再把整份 base64 塞进 IPC。
+func (s *DataTransferService) PrepareRecordingExport(suggestedName string) (*ExportSession, error) {
 	app := application.Get()
 	if app == nil || app.Dialog == nil {
 		return nil, fmt.Errorf("当前环境不支持系统文件对话框")
@@ -140,7 +137,7 @@ func (s *DataTransferService) SaveRecordingFile(encodedContent string, suggested
 		name = "dtv-recording.webm"
 	}
 	extension := strings.ToLower(filepath.Ext(name))
-	if extension != ".webm" && extension != ".mp4" && extension != ".gif" {
+	if !isRecordingExtension(extension) {
 		return nil, fmt.Errorf("不支持的录制文件类型")
 	}
 	if err := os.MkdirAll(appdirs.RecordingsDir(), 0o755); err != nil {
@@ -170,32 +167,17 @@ func (s *DataTransferService) SaveRecordingFile(encodedContent string, suggested
 	} else if selectedExtension != extension {
 		return nil, fmt.Errorf("所选扩展名与录制文件内容不一致")
 	}
-	if err := os.WriteFile(path, content, 0o600); err != nil {
-		return nil, fmt.Errorf("写入录制文件失败：%w", err)
-	}
-	return &DataTransferFile{Name: filepath.Base(path), Path: path}, nil
+	return s.exporter.CreateSession(path)
 }
 
-// SaveRecordingToHighlights 把回溯精彩导出直接写入「精彩片段保存位置」，
-// 不弹保存对话框（弹窗里已有明确的保存目录）。同名时自动加序号。
-func (s *DataTransferService) SaveRecordingToHighlights(encodedContent string, suggestedName string) (*DataTransferFile, error) {
-	const maxRecordingBytes = 256 << 20
-	if len(encodedContent) > base64.StdEncoding.EncodedLen(maxRecordingBytes) {
-		return nil, fmt.Errorf("录制文件超过 256 MiB 限制")
-	}
-	content, err := base64.StdEncoding.DecodeString(encodedContent)
-	if err != nil {
-		return nil, fmt.Errorf("解码录制文件失败：%w", err)
-	}
-	if len(content) == 0 || len(content) > maxRecordingBytes {
-		return nil, fmt.Errorf("录制文件为空或超过 256 MiB 限制")
-	}
+// PrepareHighlightExport 为回溯精彩导出确定路径（不弹对话框，同名自动加序号）。
+func (s *DataTransferService) PrepareHighlightExport(suggestedName string) (*ExportSession, error) {
 	name := filepath.Base(strings.TrimSpace(suggestedName))
 	if name == "." || name == "" {
 		name = "dtv-highlight.mp4"
 	}
 	extension := strings.ToLower(filepath.Ext(name))
-	if extension != ".webm" && extension != ".mp4" && extension != ".gif" {
+	if !isRecordingExtension(extension) {
 		return nil, fmt.Errorf("不支持的录制文件类型")
 	}
 	dir := appdirs.RecordingsDir()
@@ -213,10 +195,16 @@ func (s *DataTransferService) SaveRecordingToHighlights(encodedContent string, s
 			return nil, fmt.Errorf("精彩片段目录同名文件过多")
 		}
 	}
-	if err := os.WriteFile(path, content, 0o600); err != nil {
-		return nil, fmt.Errorf("写入精彩片段失败：%w", err)
-	}
-	return &DataTransferFile{Name: filepath.Base(path), Path: path}, nil
+	return s.exporter.CreateSession(path)
+}
+
+// CancelExport 放弃一个上传会话（导出取消 / 失败时调用，用于清理临时文件）。
+func (s *DataTransferService) CancelExport(token string) error {
+	return s.exporter.Cancel(token)
+}
+
+func isRecordingExtension(extension string) bool {
+	return extension == ".webm" || extension == ".mp4" || extension == ".gif"
 }
 
 // CopyFileToClipboard 把导出的文件放进系统剪贴板（可直接粘贴到资源管理器）。

@@ -32,7 +32,7 @@ export function AppShell() {
       <div className={styles.appMain}>
         {!hideChrome && <Navbar />}
         <main className={styles.appBody}>
-          {/* 平台首页 / 订阅页常驻，用 Activity 在其它路由隐藏，实现 keep-alive */}
+          {/* 平台首页常驻，用 Activity 在其它路由隐藏，实现 keep-alive */}
           <HomeStack />
           <Outlet />
         </main>
