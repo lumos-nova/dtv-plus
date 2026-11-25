@@ -351,7 +351,8 @@ jobs:
 
       # -------------------- Release --------------------
       # 只要至少一个安装包成功上传，就允许 Tag 发布部分可用产物。
-      # NSIS 缺失时不会因为通配符未匹配而让 MSI Release 失败。
+      # 用 gh CLI + 退避重试代替 action-gh-release：Windows/macOS 同一 tag
+      # 并发创建 Release 时 GitHub 偶发 500，重试 + "先查后建" 可自愈。
       - name: Publish GitHub Release
         if: >-
           always() &&
@@ -359,15 +360,22 @@ jobs:
           (steps.upload_msi.outcome == 'success' ||
            steps.upload_nsis.outcome == 'success' ||
            steps.upload_portable.outcome == 'success')
-        uses: softprops/action-gh-release@v2
-        with:
-          files: |
-            bin/DTV-*-amd64.msi
-            bin/DTV-*-amd64-setup.exe
-            bin/DTV-*-amd64-portable.zip
-            bin/DTV-*-amd64-portable.zip.sha256
-          generate_release_notes: true
-          fail_on_unmatched_files: false
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $patterns = @(
+            "bin/DTV-$env:VERSION-amd64.msi",
+            "bin/DTV-$env:VERSION-amd64-setup.exe",
+            "bin/DTV-$env:VERSION-amd64-portable.zip",
+            "bin/DTV-$env:VERSION-amd64-portable.zip.sha256"
+          )
+          $files = @()
+          foreach ($pattern in $patterns) {
+            $files += @(Get-ChildItem -Path $pattern -File -ErrorAction SilentlyContinue |
+              ForEach-Object { $_.FullName })
+          }
+          & ./scripts/publish-release.ps1 -Tag "${{ github.ref_name }}" -Version "$env:VERSION" -Assets $files
 
       - name: Report installer build results
         if: always()

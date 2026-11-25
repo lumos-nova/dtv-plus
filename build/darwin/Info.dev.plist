@@ -13,9 +13,9 @@
         <key>CFBundleIdentifier</key>
             <string>com.dtv.app</string>
         <key>CFBundleVersion</key>
-            <string>1.0.7</string>
+            <string>1.0.8</string>
         <key>CFBundleShortVersionString</key>
-            <string>1.0.7</string>
+            <string>1.0.8</string>
         <key>CFBundleGetInfoString</key>
             <string>DTV-PLUS — 直播聚合客户端（开发版）</string>
         <key>CFBundleIconFile</key>

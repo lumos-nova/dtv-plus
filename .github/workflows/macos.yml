@@ -208,7 +208,12 @@ jobs:
 
       - name: Attach DMG to tagged release
         if: startsWith(github.ref, 'refs/tags/')
-        uses: softprops/action-gh-release@v2
-        with:
-          files: artifacts/*.dmg
-          generate_release_notes: true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION=$(sed -n '/^info:/,$ s/^[[:space:]]*version:[[:space:]]*"\([^"]*\)".*/\1/p' build/config.yml | head -n 1)
+          if [ -z "$VERSION" ]; then
+            echo "::error::info.version not found in build/config.yml"
+            exit 1
+          fi
+          bash ./scripts/publish-release.sh "${{ github.ref_name }}" "$VERSION" artifacts/*.dmg

@@ -1,9 +1,17 @@
 # Changelog
 
-> 当前版本 **1.0.7**（版本号唯一来源：`build/config.yml` 的 `info.version`）。
+> 当前版本 **1.0.8**（版本号唯一来源：`build/config.yml` 的 `info.version`）。
 > `4.1.0` 一节记录的是上游 DTV 的移植基线；dtv-plus 自此按 1.0.x 独立编号。
 
 ## Unreleased
+
+### 修复（CI 发布）
+
+- Windows / macOS 两个工作流都会被同一 tag 触发，`softprops/action-gh-release`
+  并发创建 Release 时 GitHub API 返回 500，三次重试耗尽后整个 Job 失败（产物本身
+  已上传成功）。改为 `scripts/publish-release.{ps1,sh}`：先查已有 Release 再上传、
+  指数退避重试 5 次、第 4 次起跳过自动 release notes；最终失败仅告警，不再让构建
+  变红。
 
 ### 修复（直播链路）
 
@@ -341,7 +349,7 @@
 
 - 清理订阅分区遗留的死代码（Provider / 页面 / keep-alive 容器 / 分区栏 CSS）与过时注释；
   数据同步仍兼容旧订阅键，`/subscribe` `/custom` 旧书签重定向保留。
-- 版本号统一为 **1.0.7**，唯一来源为 `build/config.yml` 的 `info.version`；
+- 版本号统一由 `build/config.yml` 的 `info.version` 作为唯一来源；
   新增 `scripts/check-versions.mjs`，校验前端包、Windows PE 资源、macOS plist
   与 CHANGELOG 顶部说明的一致性。
 - 新增 CI 工作流：Go test、版本号校验、Wails bindings 生成、TypeScript 类型检查、
@@ -420,7 +428,7 @@
 - 新增 GitHub Actions：Go 测试 + typecheck + lint + Vitest + 前端构建。
 - 新增 `docs/ARCHITECTURE.md`、`docs/SHORTCUTS.md`，更新 README。
 
-### 尚未实现（截至 1.0.7，保留在路线图）
+### 尚未实现（截至 1.0.8，保留在路线图）
 
 - 斗鱼文本弹幕发送（协议与频率限制待确认）。
 - 登录凭据安全存储：Windows DPAPI / macOS Keychain / Linux Secret Service；
