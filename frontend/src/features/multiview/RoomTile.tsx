@@ -1,4 +1,4 @@
-import { FolderPlus, History, Video } from "lucide-react";
+import { FolderPlus, History, Share2, Star, Video } from "lucide-react";
 import { useEffect, useRef, useState, type PointerEvent } from "react";
 import { createPortal } from "react-dom";
 import { api, PLATFORM_LABEL, type DanmakuMessage, type StreamInfo } from "@/api";
@@ -21,6 +21,7 @@ import {
 } from "./layout";
 import { clearRoomReplayStats, setRoomReplayStats } from "./recordingStats";
 import { clearRoomMeta, setRoomMeta } from "./roomDirectory";
+import { liveRoomShareUrl } from "./roomUrl";
 import { GroupAssignDialog } from "./GroupAssignDialog";
 import { ReplayHighlightModal } from "./ReplayHighlightModal";
 import { useRoomRecording } from "./useRoomRecording";
@@ -414,6 +415,36 @@ export function RoomTile({
     );
   };
 
+  // 右键「分享主播」：复制规范直播间链接，可直接粘贴回添加框或发给别人。
+  const shareRoom = async () => {
+    setContextMenu(null);
+    const url = liveRoomShareUrl(room.platform, room.roomId);
+    const name = info?.nickname || `房间 ${room.roomId}`;
+    try {
+      await navigator.clipboard.writeText(url);
+      toast(`已复制 ${name} 的直播间链接`, "success");
+    } catch {
+      toast("复制失败，请检查系统剪贴板权限", "error");
+    }
+  };
+
+  // 右键「关注主播 / 取消关注」：与侧边栏关注列表同步。
+  const toggleFollowRoom = () => {
+    setContextMenu(null);
+    toggleFollow({
+      id: room.roomId,
+      platform: room.platform,
+      nickname: info?.nickname || `房间 ${room.roomId}`,
+      title: info?.title ?? "",
+      cover: "",
+      avatar: info?.avatar ?? "",
+      viewers: 0,
+      categoryName: "",
+      isLive: info?.isLive ?? true,
+      isLoop: info?.isLoop,
+    });
+  };
+
   // 未关注的主播先自动关注，才能进侧边栏文件夹。
   const ensureFollowed = () => {
     if (isFollowing(room.platform, room.roomId)) return;
@@ -531,36 +562,48 @@ export function RoomTile({
     return true;
   };
 
+  /* 异常自愈：直播流异常（出错 / 持续缓冲）时**直接重新拉取直播间**
+   *（重新取流 + 重建播放器，不再退避等待）；连续刷新超过 2 次仍异常，
+   * 再切换线路刷新（坏线路对着同一地址重试无意义）。换线 / 回退清晰度后
+   * 计数清零。仅当已无线路/档位可换时才退避刷新，避免对永久失效的流疯狂打上游。 */
+  const recoverRef = useRef<() => void>(() => {});
+  recoverRef.current = () => {
+    reconnectAttemptRef.current += 1;
+    if (reconnectAttemptRef.current > 2) {
+      // 刷新 >2 次：换一条没试过的线路再刷新（换线本身会触发重新取流）。
+      if (switchToNextLineRef.current()) {
+        reconnectAttemptRef.current = 0;
+        return;
+      }
+      // 没有可换的线路：手动选过清晰度时回退自动档（坏档位重试无意义）。
+      const fallback = qualityFallbackRef.current;
+      if (fallback.qualityId) {
+        reconnectAttemptRef.current = 0;
+        fallback.onQualityChange(room.key, "");
+        toast(
+          `${fallback.nickname || `房间 ${room.roomId}`}：所选清晰度暂不可用，已切回默认清晰度`,
+          "info",
+        );
+        return;
+      }
+      // 已无线路/档位可换：退避刷新（2s→4s→…→30s），避免疯狂打上游。
+      const delay = Math.min(30_000, 2_000 * 2 ** Math.min(reconnectAttemptRef.current - 3, 4));
+      window.setTimeout(() => setRetryKey((key) => key + 1), delay);
+      return;
+    }
+    // 异常直接重新拉取直播间。
+    setRetryKey((key) => key + 1);
+  };
+
   useEffect(() => {
     if (player.state === "playing") {
       reconnectAttemptRef.current = 0;
       return;
     }
     if (player.state !== "error") return;
-    reconnectAttemptRef.current += 1;
-    // 同一条线路一出错就先尝试换线。坏线路（如某 CDN 给特定房间返回损坏的
-    // FLV 流）对着同一地址重试毫无意义，换一条线路往往立刻恢复。
-    if (reconnectAttemptRef.current >= 1 && switchToNextLineRef.current()) {
-      reconnectAttemptRef.current = 0;
-      return;
-    }
-    // 手动选的清晰度连续失败 3 次：多半是该档位本身不可用（需要登录、
-    // 匿名被降级、地址失效等），继续对着同一个地址退避重试只会无限重连。
-    // 切回自动选档（pickTileVariant 会挑最省资源且通常可播的档位）。
-    const fallback = qualityFallbackRef.current;
-    if (reconnectAttemptRef.current >= 3 && fallback.qualityId) {
-      reconnectAttemptRef.current = 0;
-      fallback.onQualityChange(room.key, "");
-      toast(
-        `${fallback.nickname || `房间 ${room.roomId}`}：所选清晰度暂不可用，已切回默认清晰度`,
-        "info",
-      );
-      return;
-    }
-    const delay = Math.min(30_000, 2_000 * 2 ** Math.min(reconnectAttemptRef.current - 1, 4));
-    const timer = window.setTimeout(() => setRetryKey((key) => key + 1), delay);
-    return () => window.clearTimeout(timer);
-  }, [player.errorNonce, player.state, room.key, room.roomId, toast]);
+    // 异常直接重新拉取直播间（立即触发，不退避等待）。
+    recoverRef.current();
+  }, [player.errorNonce, player.state]);
 
   /* ---------------------------------------------------- 线路自愈（卡住换线）
    * 实测：虎牙 TX CDN 会给特定房间返回损坏的 FLV（头声明纯视频却混着音频
@@ -577,6 +620,7 @@ export function RoomTile({
     };
     if (player.state === "playing") {
       stallTriedRef.current = new Set();
+      reconnectAttemptRef.current = 0;
       clear();
       return;
     }
@@ -595,10 +639,8 @@ export function RoomTile({
     clear();
     stallWatchdogRef.current = window.setTimeout(() => {
       stallWatchdogRef.current = null;
-      if (!switchToNextLineRef.current()) {
-        stallTriedRef.current = new Set();
-        setRetryKey((key) => key + 1);
-      }
+      // 与出错走同一套自愈：先刷新，刷新 >2 次再换线。
+      recoverRef.current();
     }, delay);
     return clear;
   }, [player.state, info?.isLive, info?.isLoop]);
@@ -941,6 +983,17 @@ export function RoomTile({
               <div className={styles.contextMenuTitle}>
                 {currentFolder ? `分组：${currentFolder.name}` : "直播间操作"}
               </div>
+              <button type="button" role="menuitem" onClick={toggleFollowRoom}>
+                <Star
+                  size={14}
+                  fill={isFollowing(room.platform, room.roomId) ? "currentColor" : "none"}
+                />
+                {isFollowing(room.platform, room.roomId) ? "取消关注" : "关注主播"}
+              </button>
+              <button type="button" role="menuitem" onClick={() => void shareRoom()}>
+                <Share2 size={14} />
+                分享主播
+              </button>
               <button
                 type="button"
                 role="menuitem"

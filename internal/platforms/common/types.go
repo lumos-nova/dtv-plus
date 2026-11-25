@@ -106,6 +106,45 @@ type SearchHit struct {
 	IsLive   bool   `json:"isLive"`
 }
 
+// CollectSearchPages 顺序抓取多页搜索结果并按房间号去重合并，扩大搜索覆盖面。
+//
+// 单页搜索通常只返回约 20 条，排名靠后的主播明明存在却搜不到；多取几页
+// 能显著改善。第一页失败直接返回错误（前端据此提示）；后续页失败或为空
+// 则提前结束，保留已取到的结果。结果保持上游排序（先取到的在前）。
+func CollectSearchPages(fetch func(page, pageSize int) ([]SearchHit, error), pages, pageSize int) ([]SearchHit, error) {
+	if pages < 1 {
+		pages = 1
+	}
+	if pageSize <= 0 {
+		pageSize = 20
+	}
+	seen := make(map[string]struct{})
+	out := make([]SearchHit, 0, pages*pageSize)
+	for page := 1; page <= pages; page++ {
+		hits, err := fetch(page, pageSize)
+		if err != nil {
+			if page == 1 {
+				return nil, err
+			}
+			break
+		}
+		if len(hits) == 0 {
+			break
+		}
+		for _, hit := range hits {
+			if hit.ID == "" {
+				continue
+			}
+			if _, dup := seen[hit.ID]; dup {
+				continue
+			}
+			seen[hit.ID] = struct{}{}
+			out = append(out, hit)
+		}
+	}
+	return out, nil
+}
+
 // DanmakuKind 弹幕类型，取值与前端 DanmakuKind 一致。
 type DanmakuKind string
 

@@ -48,24 +48,24 @@ export const douyinApi = {
   },
 
   /**
-   * 抖音没有搜索接口：按直播间号/链接直接取房间信息，失败则返回空结果。
-   * 这样搜索框仍然可用（输入 933572413882 或直播间链接都能跳）。
+   * 抖音没有可用的关键字搜索接口（web 搜索被 webmssdk 安全验证门拦截）：
+   * 按直播间号直接取房间信息，失败则返回空结果。
+   * 这样搜索框仍然可用（输入 933572413882 等房间号能跳）。
    */
   search(keyword: string): Promise<SearchHit[]> {
     const trimmed = keyword.trim();
     if (!trimmed) return Promise.resolve([]);
 
     return toPromise(Douyin.FetchRoomInfo(trimmed))
-      .then((room) => {
-        const hit = mapSearchHit({
+      .then((room) => [
+        mapSearchHit({
           id: room.id,
           nickname: room.nickname,
           title: room.title,
           avatar: room.avatar,
           isLive: room.isLive,
-        });
-        return [hit];
-      })
+        }),
+      ])
       .catch((err: unknown) => {
         // 被服务器拦截（风控/验证码）时把错误透传给搜索框
         const message = err instanceof Error ? err.message : String(err);

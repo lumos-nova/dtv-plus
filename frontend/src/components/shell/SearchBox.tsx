@@ -1,11 +1,12 @@
 import { Card, ListBox } from "@heroui/react";
-import { Search, X } from "lucide-react";
+import { Search, Star, X } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, PLATFORM_LABEL, PLATFORM_TAB_ORDER, type LivePlatform, type SearchHit } from "@/api";
 import { SmoothImage } from "@/components/common/SmoothImage";
 import { Spinner } from "@/components/ui/Spinner";
 import { cn } from "@/lib/cn";
 import { useOpenMonitorRoom } from "@/lib/navigation";
+import { useFollow } from "@/state/FollowProvider";
 import styles from "./SearchBox.module.css";
 
 type SearchResult = SearchHit & { platform: LivePlatform; key: string };
@@ -21,6 +22,7 @@ type SearchResult = SearchHit & { platform: LivePlatform; key: string };
  */
 export function SearchBox() {
   const openRoomNavigation = useOpenMonitorRoom();
+  const { isFollowing, toggleFollow } = useFollow();
   const [query, setQuery] = useState("");
   const [hits, setHits] = useState<SearchResult[]>([]);
   const [loading, setLoading] = useState(false);
@@ -165,6 +167,24 @@ export function SearchBox() {
     }
   };
 
+  // 搜索结果旁的关注按钮：直接关注/取消关注该主播，不打开直播间。
+  const toggleFollowHit = useCallback(
+    (hit: SearchResult) => {
+      toggleFollow({
+        id: hit.id,
+        platform: hit.platform,
+        nickname: hit.nickname,
+        title: hit.title,
+        cover: "",
+        avatar: hit.avatar,
+        viewers: 0,
+        categoryName: "",
+        isLive: hit.isLive,
+      });
+    },
+    [toggleFollow],
+  );
+
   const moveActive = (delta: number) => {
     if (hits.length === 0) return;
     setActiveIndex((prev) => {
@@ -297,6 +317,30 @@ export function SearchBox() {
                         </span>
                         <span className={styles.platformTag}>{PLATFORM_LABEL[hit.platform]}</span>
                         <span className={cn(styles.dot, hit.isLive && styles.dotLive)} />
+                        <button
+                          type="button"
+                          className={cn(
+                            styles.followBtn,
+                            isFollowing(hit.platform, hit.id) && styles.followBtnOn,
+                          )}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            toggleFollowHit(hit);
+                          }}
+                          onMouseDown={(e) => e.stopPropagation()}
+                          aria-label={
+                            isFollowing(hit.platform, hit.id)
+                              ? `取消关注 ${hit.nickname}`
+                              : `关注 ${hit.nickname}`
+                          }
+                          title={isFollowing(hit.platform, hit.id) ? "取消关注" : "关注"}
+                        >
+                          <Star
+                            size={14}
+                            strokeWidth={2.2}
+                            fill={isFollowing(hit.platform, hit.id) ? "currentColor" : "none"}
+                          />
+                        </button>
                       </ListBox.Item>
                     ))}
                   </ListBox>

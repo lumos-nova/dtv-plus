@@ -12,8 +12,8 @@ import (
 
 // DouyinService 是抖音平台的 IPC 边界（与 DouyuService / HuyaService 一一对应）。
 //
-// 抖音没有"多线路"概念，也没有搜索接口（旧项目里搜索框只接受直播间号），
-// 因此这里的方法集比斗鱼/虎牙略窄。
+// 抖音没有"多线路"概念，也没有可用的关键字搜索接口（web 搜索被 webmssdk
+// 安全验证门拦截），搜索框只接受直播间号，因此方法集比斗鱼/虎牙略窄。
 type DouyinService struct {
 	client  *douyin.Client
 	danmaku *douyin.DanmakuManager

@@ -248,6 +248,27 @@
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--status-online) 18%, transparent);
 }
 
+/* 搜索结果旁的关注按钮 */
+.followBtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  flex: 0 0 auto;
+  color: var(--text-tertiary);
+}
+
+.followBtn:hover {
+  background: var(--fill-tertiary);
+  color: var(--accent-ink);
+}
+
+.followBtnOn {
+  color: var(--accent-ink);
+}
+
 .meta {
   padding: 22px 12px;
   font-size: var(--text-sm);

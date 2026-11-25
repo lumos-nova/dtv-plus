@@ -76,7 +76,9 @@ func (s *HuyaService) SearchAnchor(keyword string) ([]common.SearchHit, error) {
 	if keyword == "" {
 		return []common.SearchHit{}, nil
 	}
-	hits, err := s.client.SearchAnchor(keyword, 1, 20)
+	hits, err := common.CollectSearchPages(func(page, size int) ([]common.SearchHit, error) {
+		return s.client.SearchAnchor(keyword, page, size)
+	}, 2, 30)
 	if err != nil {
 		log.Printf("[HuyaService] 搜索失败 kw=%s: %v", keyword, err)
 		return nil, err

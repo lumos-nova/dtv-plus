@@ -12,6 +12,8 @@ import styles from "./HomeScreen.module.css";
 
 interface HomeScreenProps {
   platform: LivePlatform;
+  /** 当前是否为可见平台（HomeStack 的 Activity 切换）；切回时刷新列表 */
+  active?: boolean;
 }
 
 /**
@@ -23,7 +25,7 @@ interface HomeScreenProps {
  *
  * 分区选择同步到 URL（`?g=&c=&s=`），刷新/深链接/缓存 key 都稳定（U-02）。
  */
-export function HomeScreen({ platform }: HomeScreenProps) {
+export function HomeScreen({ platform, active = true }: HomeScreenProps) {
   const { isFollowing, toggleFollow } = useFollow();
 
   const [searchParams, setSearchParams] = useSearchParams();
@@ -152,6 +154,22 @@ export function HomeScreen({ platform }: HomeScreenProps) {
   );
 
   const feed = useStreamerFeed(feedQuery, listRef);
+
+  /* 切回本平台时刷新列表，避免已关播的主播仍显示"直播中"。
+   * keep-alive 恢复默认复用内存数据（feed 的 loadedQueryRef 守卫），这里
+   * 主动 reload 强制重拉第一页。首次挂载不刷新（feed 自身会正常加载）；
+   * 有缓存垫底，刷新期间旧卡片保持显示，新数据到达再替换，不闪骨架屏。 */
+  const feedReloadRef = useRef(feed.reload);
+  feedReloadRef.current = feed.reload;
+  const feedMountedRef = useRef(false);
+  useEffect(() => {
+    if (!active) return;
+    if (feedMountedRef.current) {
+      feedReloadRef.current();
+    } else {
+      feedMountedRef.current = true;
+    }
+  }, [active]);
 
   /* ------------------------------------------------------------ URL 同步 */
   useEffect(() => {

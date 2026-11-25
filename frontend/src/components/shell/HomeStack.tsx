@@ -42,7 +42,7 @@ export function HomeStack() {
     <>
       {platforms.map((platform) => (
         <Activity key={platform} mode={active === platform ? "visible" : "hidden"}>
-          <HomeScreen platform={platform} />
+          <HomeScreen platform={platform} active={active === platform} />
         </Activity>
       ))}
     </>
