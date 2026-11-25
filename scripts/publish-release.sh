@@ -1,9 +1,14 @@
 #!/usr/bin/env bash
-# 用 GitHub CLI 发布 Release（与 publish-release.ps1 行为一致）。
+# Publish a GitHub Release with the GitHub CLI (mirrors publish-release.ps1).
 #
-# 处理两个问题：同一 tag 触发的 Windows / macOS 工作流并发创建 Release 时
-# GitHub 返回 500，以及 GitHub API 偶发 5xx。先查已有 Release 再上传，
-# 失败指数退避重试；第 4 次起跳过自动 release notes，最终失败只告警不失败构建。
+# 1. Find or create the release; re-check after a failed create because the
+#    other platform workflow may have created it concurrently.
+# 2. Upload assets ONE BY ONE, each with its own retry loop. Delete a stale
+#    same-named asset first (clobber alone is unreliable under 5xx / races).
+#    A failure on one asset never blocks the remaining assets.
+# 3. Force the release out of draft state (gh release edit --draft=false).
+# 4. Verify every expected asset is present; any missing asset or draft state
+#    fails the job with an ::error:: annotation (no false green CI).
 set -uo pipefail
 
 TAG="$1"
@@ -19,35 +24,97 @@ if [ "${#FILES[@]}" -eq 0 ]; then
   exit 0
 fi
 
-publish_once() {
-  local with_notes="$1"
-  # 另一个工作流可能已建好 Release：补传资产即可。
-  if gh release view "$TAG" --json tagName >/dev/null 2>&1; then
-    gh release upload "$TAG" "${FILES[@]}" --clobber
-    return $?
-  fi
-  if [ "$with_notes" = "1" ]; then
-    gh release create "$TAG" "${FILES[@]}" --title "DTV $VERSION" --generate-notes --verify-tag
-  else
-    gh release create "$TAG" "${FILES[@]}" --title "DTV $VERSION" --notes "DTV $VERSION" --verify-tag
-  fi
-  return $?
-}
+MAX_ATTEMPTS=5
 
-for attempt in 1 2 3 4 5; do
-  notes=1
-  [ "$attempt" -gt 3 ] && notes=0
-  if publish_once "$notes"; then
-    echo "GitHub Release 已发布：$TAG"
-    exit 0
-  fi
-  echo "::warning::发布失败（第 $attempt/5 次）"
-  if [ "$attempt" -lt 5 ]; then
-    delay=$((5 * 2 ** (attempt - 1)))
+backoff() {
+  local attempt="$1" message="$2"
+  echo "::warning::$message"
+  if [ "$attempt" -lt "$MAX_ATTEMPTS" ]; then
+    local delay=$((5 * 2 ** (attempt - 1)))
     [ "$delay" -gt 30 ] && delay=30
     sleep "$delay"
   fi
+}
+
+release_exists() {
+  gh release view "$TAG" --json tagName >/dev/null 2>&1
+}
+
+asset_names() {
+  gh release view "$TAG" --json assets --jq '.assets[].name' 2>/dev/null || true
+}
+
+# --- 1. Ensure release exists -------------------------------------------------
+release_ready=0
+for attempt in 1 2 3 4 5; do
+  if release_exists; then release_ready=1; break; fi
+  if [ "$attempt" -le 3 ]; then
+    gh release create "$TAG" --title "DTV $VERSION" --generate-notes --verify-tag >/dev/null 2>&1
+  else
+    gh release create "$TAG" --title "DTV $VERSION" --notes "DTV $VERSION" --verify-tag >/dev/null 2>&1
+  fi
+  if [ $? -eq 0 ]; then release_ready=1; break; fi
+  # The other workflow might have won the race; re-check before retrying.
+  if release_exists; then release_ready=1; break; fi
+  backoff "$attempt" "确保 Release 存在失败（第 $attempt/$MAX_ATTEMPTS 次）"
+done
+if [ "$release_ready" -ne 1 ]; then
+  echo "::error::无法创建或找到 GitHub Release：$TAG"
+  exit 1
+fi
+
+# --- 2. Per-asset upload with per-asset retry ---------------------------------
+failed=0
+for file in "${FILES[@]}"; do
+  name=$(basename "$file")
+  uploaded=0
+  for attempt in 1 2 3 4 5; do
+    if asset_names | grep -Fxq "$name"; then
+      if ! gh release delete-asset "$TAG" "$name" --yes >/dev/null 2>&1; then
+        backoff "$attempt" "删除同名资产 $name 失败（第 $attempt/$MAX_ATTEMPTS 次）"
+        continue
+      fi
+    fi
+    if gh release upload "$TAG" "$file" >/dev/null 2>&1; then
+      echo "已上传资产：$name"
+      uploaded=1
+      break
+    fi
+    backoff "$attempt" "上传 $name 失败（第 $attempt/$MAX_ATTEMPTS 次）"
+  done
+  if [ "$uploaded" -ne 1 ]; then
+    echo "::error::资产上传失败：$name"
+    failed=1
+  fi
 done
 
-echo "::warning::GitHub Release 发布失败；安装包仍保留在 Actions 产物中，可稍后手动发布"
+# --- 3. Ensure release is published (not a draft) -----------------------------
+published=0
+for attempt in 1 2 3 4 5; do
+  if gh release edit "$TAG" --draft=false >/dev/null 2>&1; then
+    draft=$(gh release view "$TAG" --json isDraft --jq .isDraft 2>/dev/null)
+    if [ "$draft" = "false" ]; then published=1; break; fi
+  fi
+  backoff "$attempt" "发布 Release 失败（第 $attempt/$MAX_ATTEMPTS 次）"
+done
+if [ "$published" -ne 1 ]; then
+  echo "::error::Release $TAG 仍是草稿"
+  failed=1
+fi
+
+# --- 4. Post-publish verification ---------------------------------------------
+final_names=$(asset_names)
+for file in "${FILES[@]}"; do
+  name=$(basename "$file")
+  if ! printf '%s\n' "$final_names" | grep -Fxq "$name"; then
+    echo "::error::发布后校验失败，缺少资产：$name"
+    failed=1
+  fi
+done
+if [ "$failed" -ne 0 ]; then
+  echo "::error::GitHub Release $TAG 不完整，详见上方失败项"
+  exit 1
+fi
+
+echo "GitHub Release 已发布并校验通过：$TAG（${#FILES[@]} 个资产）"
 exit 0

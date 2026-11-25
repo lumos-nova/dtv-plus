@@ -4,57 +4,127 @@ param(
     [Parameter(Mandatory = $true)][string[]]$Assets
 )
 
-# Publish a GitHub Release with the GitHub CLI instead of softprops/action-gh-release.
+# Publish a GitHub Release with the GitHub CLI.
 #
-# Why: the Windows and macOS workflows are both triggered by the same tag. When
-# both call "create release" at the same time, GitHub may answer HTTP 500; the
-# API also has occasional 5xx blips. This script checks for an existing release
-# first (upload assets there instead), retries with exponential backoff, and
-# drops auto-generated release notes after 3 failed attempts. A final failure is
-# only a warning: installers remain available as Actions artifacts.
+# ASCII-only on purpose: Windows PowerShell 5.1 reads BOM-less UTF-8 as ANSI.
+#
+# Behaviour (mirrored in publish-release.sh):
+#   1. Find or create the release; re-check after a failed create because the
+#      other platform workflow may have created it concurrently.
+#   2. Upload assets ONE BY ONE, each with its own retry loop. Delete a stale
+#      same-named asset first (clobber alone is unreliable under 5xx / races).
+#      A failure on one asset never blocks the remaining assets.
+#   3. Force the release out of draft state (gh release edit --draft=false).
+#   4. Verify every expected asset is present; any missing asset or draft state
+#      fails the job with an ::error:: annotation (no false green CI).
 
 $ErrorActionPreference = "Continue"
+$MaxAttempts = 5
 $files = @($Assets | Where-Object { $_ -and (Test-Path -LiteralPath $_) })
 if ($files.Count -eq 0) {
     Write-Warning "No release assets found; skipping GitHub Release"
     exit 0
 }
 
-function Publish-Once {
-    param([bool]$WithNotes)
+function Get-BackoffSeconds {
+    param([int]$Attempt)
+    return [math]::Min(30, 5 * [math]::Pow(2, $Attempt - 1))
+}
 
-    # The other workflow may have created the release already; just upload.
+function Invoke-Backoff {
+    param([int]$Attempt, [string]$Message)
+    Write-Warning $Message
+    if ($Attempt -lt $MaxAttempts) {
+        Start-Sleep -Seconds (Get-BackoffSeconds -Attempt $Attempt)
+    }
+}
+
+function Test-ReleaseExists {
     $null = & gh release view $Tag --json tagName 2>$null
-    if ($LASTEXITCODE -eq 0) {
-        & gh release upload $Tag @files --clobber
-        return $LASTEXITCODE
-    }
+    return ($LASTEXITCODE -eq 0)
+}
 
-    if ($WithNotes) {
-        & gh release create $Tag @files --title "DTV $Version" --generate-notes --verify-tag
+function Get-AssetNames {
+    $names = @(& gh release view $Tag --json assets --jq '.assets[].name' 2>$null)
+    return @($names | Where-Object { $_ })
+}
+
+# --- 1. Ensure release exists -------------------------------------------------
+$releaseReady = $false
+for ($attempt = 1; $attempt -le $MaxAttempts; $attempt++) {
+    if (Test-ReleaseExists) { $releaseReady = $true; break }
+
+    if ($attempt -le 3) {
+        & gh release create $Tag --title "DTV $Version" --generate-notes --verify-tag 2>$null
     } else {
-        & gh release create $Tag @files --title "DTV $Version" --notes "DTV $Version" --verify-tag
+        & gh release create $Tag --title "DTV $Version" --notes "DTV $Version" --verify-tag 2>$null
     }
-    return $LASTEXITCODE
+    if ($LASTEXITCODE -eq 0) { $releaseReady = $true; break }
+
+    # The other workflow might have won the race; re-check before retrying.
+    if (Test-ReleaseExists) { $releaseReady = $true; break }
+    Invoke-Backoff -Attempt $attempt -Message "Ensure release attempt $attempt/$MaxAttempts failed"
+}
+if (-not $releaseReady) {
+    Write-Host "::error::Cannot create or find GitHub Release for $Tag"
+    exit 1
 }
 
-for ($attempt = 1; $attempt -le 5; $attempt++) {
-    $withNotes = $attempt -le 3
-    try {
-        $code = Publish-Once -WithNotes $withNotes
-        if ($code -eq 0) {
-            Write-Host "GitHub Release published: $Tag"
-            exit 0
+# --- 2. Per-asset upload with per-asset retry ---------------------------------
+$failed = $false
+foreach ($file in $files) {
+    $name = [System.IO.Path]::GetFileName($file)
+    $uploaded = $false
+    for ($attempt = 1; $attempt -le $MaxAttempts; $attempt++) {
+        if ((Get-AssetNames) -contains $name) {
+            & gh release delete-asset $Tag $name --yes 2>$null
+            if ($LASTEXITCODE -ne 0) {
+                Invoke-Backoff -Attempt $attempt -Message "Cannot remove stale asset $name (attempt $attempt/$MaxAttempts)"
+                continue
+            }
         }
-        throw "gh exited with code $code"
-    } catch {
-        Write-Warning "Release attempt $attempt/5 failed: $($_.Exception.Message)"
-        if ($attempt -lt 5) {
-            $delay = [math]::Min(30, 5 * [math]::Pow(2, $attempt - 1))
-            Start-Sleep -Seconds $delay
+        & gh release upload $Tag $file 2>$null
+        if ($LASTEXITCODE -eq 0) {
+            Write-Host "Uploaded asset: $name"
+            $uploaded = $true
+            break
         }
+        Invoke-Backoff -Attempt $attempt -Message "Upload $name failed (attempt $attempt/$MaxAttempts)"
+    }
+    if (-not $uploaded) {
+        Write-Host "::error::Asset upload failed: $name"
+        $failed = $true
     }
 }
 
-Write-Warning "GitHub Release not published; installers are still available as Actions artifacts"
+# --- 3. Ensure release is published (not a draft) -----------------------------
+$published = $false
+for ($attempt = 1; $attempt -le $MaxAttempts; $attempt++) {
+    & gh release edit $Tag --draft=false 2>$null
+    if ($LASTEXITCODE -eq 0) {
+        $isDraft = (& gh release view $Tag --json isDraft --jq .isDraft 2>$null | Out-String).Trim()
+        if ($isDraft -eq "false") { $published = $true; break }
+    }
+    Invoke-Backoff -Attempt $attempt -Message "Publish release attempt $attempt/$MaxAttempts failed"
+}
+if (-not $published) {
+    Write-Host "::error::Release $Tag is still a draft"
+    $failed = $true
+}
+
+# --- 4. Post-publish verification ---------------------------------------------
+$finalNames = Get-AssetNames
+foreach ($file in $files) {
+    $name = [System.IO.Path]::GetFileName($file)
+    if ($finalNames -notcontains $name) {
+        Write-Host "::error::Release verification failed; missing asset: $name"
+        $failed = $true
+    }
+}
+if ($failed) {
+    Write-Host "::error::GitHub Release for $Tag is incomplete; see failed assets above"
+    exit 1
+}
+
+Write-Host "GitHub Release published and verified: $Tag ($($files.Count) assets)"
 exit 0

@@ -10,8 +10,10 @@
 - Windows / macOS 两个工作流都会被同一 tag 触发，`softprops/action-gh-release`
   并发创建 Release 时 GitHub API 返回 500，三次重试耗尽后整个 Job 失败（产物本身
   已上传成功）。改为 `scripts/publish-release.{ps1,sh}`：先查已有 Release 再上传、
-  指数退避重试 5 次、第 4 次起跳过自动 release notes；最终失败仅告警，不再让构建
-  变红。
+  指数退避重试 5 次、第 4 次起跳过自动 release notes。
+- 发布步骤进一步加固：**逐资产独立重试**（先删除同名资产再上传，单个资产失败
+  不影响其它资产）、发布后强制 `--draft=false` 并校验每个期望资产确实存在；
+  任一环节最终失败会输出 `::error::` 并让 Job 变红，避免"CI 绿但发行版缺件"。
 
 ### 修复（直播链路）
 
